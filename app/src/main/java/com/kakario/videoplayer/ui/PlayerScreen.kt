@@ -88,6 +88,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
+import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.util.VLCVideoLayout
 import java.io.File
@@ -285,7 +286,7 @@ fun PlayerScreen(
                 subs.forEachIndexed { i, sub ->
                     val bytes = currentReadFile(sub)
                     val file = withContext(Dispatchers.IO) { Subtitles.saveAsUtf8(context.cacheDir, sub, bytes) }
-                    if (player.addSlave(Media.Slave.Type.Subtitle, Uri.fromFile(file), i == 0)) externalSubs++
+                    if (player.addSlave(IMedia.Slave.Type.Subtitle, Uri.fromFile(file), i == 0)) externalSubs++
                 }
                 if (externalSubs > 0) showHint("자막 연결됨: ${subs.first().name}")
             } catch (e: CancellationException) {
