@@ -41,9 +41,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     packaging {
         jniLibs {
             useLegacyPackaging = true
@@ -68,4 +65,10 @@ dependencies {
     implementation("commons-net:commons-net:3.11.1")
     // 재생 엔진 (VLC) — MKV·AVI·AC3/DTS 음성·SMI/SRT/ASS 자막까지 폭넓게 지원
     implementation("org.videolan.android:libvlc-all:3.7.6")
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
