@@ -28,7 +28,16 @@ jobs:
           gradle-version: 8.11.1
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      # 빌드가 실패하면 오류 줄만 골라 요약(annotation)으로 남긴다 — 채팅에서 원인 확인용
+      - name: Report build errors
+        if: failure()
+        run: |
+          msg=$(grep -E "^e: |What went wrong|Could not |error:|Unresolved|> " build.log | grep -v "^> Task" | head -40 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=BuildErrors::${msg}"
 
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk video-player.apk
