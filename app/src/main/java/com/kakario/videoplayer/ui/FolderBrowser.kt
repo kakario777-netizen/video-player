@@ -55,6 +55,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.model.FileEntry
+import com.kakario.videoplayer.data.PlaybackStore
+import androidx.compose.ui.platform.LocalContext
 import com.kakario.videoplayer.model.MediaOrigin
 import com.kakario.videoplayer.model.UserFacingException
 import kotlinx.coroutines.CancellationException
@@ -94,6 +96,7 @@ fun FolderBrowser(
     var menuFor by remember { mutableStateOf<FileEntry?>(null) }
     var deleteTarget by remember { mutableStateOf<FileEntry?>(null) }
     var deleteStep by remember { mutableIntStateOf(0) }
+    val playback = PlaybackStore.get(LocalContext.current)
 
     val currentLoad by rememberUpdatedState(load)
     val currentDelete by rememberUpdatedState(delete)
@@ -180,6 +183,7 @@ fun FolderBrowser(
                             ) {
                                 items(visible, key = { it.path }) { entry ->
                                     VideoTile(
+                                        origin = origin,
                                         entry = entry,
                                         favorite = entry.isDirectory && isFavorite(entry.path),
                                         onToggleFavorite = { toggle(entry.path) },
@@ -210,9 +214,18 @@ fun FolderBrowser(
                         InfoLine("용량", formatBytes(target.size))
                         InfoLine("형식", target.extension.uppercase())
                         InfoLine("위치", if (origin.server != null) "🗄️ ${origin.server.name}" else "📱 내 폰")
+                        val watched = remember(target, playback.version) { playback.get(playback.keyFor(origin, target)) }
+                        if (watched.started) {
+                            InfoLine("본 위치", "${formatTime(watched.positionMs)} / ${formatTime(watched.lengthMs)}")
+                        }
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                         Spacer(Modifier.height(4.dp))
+                        MenuItem("⏮️  시청 기록 지우기 (처음부터 보기)", enabled = watched.started) {
+                            menuFor = null
+                            playback.clear(playback.keyFor(origin, target))
+                            toast("시청 기록을 지웠어요")
+                        }
                         MenuItem("🗑️  파일 삭제", color = MaterialTheme.colorScheme.error) {
                             menuFor = null
                             deleteTarget = target
@@ -253,6 +266,7 @@ fun FolderBrowser(
                     scope.launch {
                         try {
                             currentDelete(target)
+                            playback.clear(playback.keyFor(origin, target))
                             toast("삭제했어요")
                             reloadKey++
                         } catch (e: CancellationException) {
@@ -317,6 +331,7 @@ private fun MenuItem(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun VideoTile(
+    origin: MediaOrigin,
     entry: FileEntry,
     favorite: Boolean,
     onToggleFavorite: () -> Unit,
@@ -367,6 +382,7 @@ private fun VideoTile(
                 }
                 SmallBadge(entry.extension.uppercase(), Modifier.align(Alignment.TopStart))
                 SmallBadge(formatBytes(entry.size), Modifier.align(Alignment.BottomEnd))
+                WatchBar(origin, entry, Modifier.align(Alignment.BottomCenter))
             }
         }
         Spacer(Modifier.height(6.dp))
@@ -378,6 +394,45 @@ private fun VideoTile(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 2.dp),
         )
+    }
+}
+
+/** 썸네일 아래쪽: 본 만큼 파란 막대, 다 봤으면 '다 봄' 표시. */
+@Composable
+private fun WatchBar(origin: MediaOrigin, entry: FileEntry, modifier: Modifier) {
+    val ctx = LocalContext.current
+    val store = remember { PlaybackStore.get(ctx) }
+    val version = store.version // 재생 화면을 닫으면 바뀌어서 다시 그린다
+    val p = remember(version, entry.path, entry.size) { store.get(store.keyFor(origin, entry)) }
+    if (!p.started) return
+    Box(modifier.fillMaxWidth()) {
+        if (p.finished) {
+            Text(
+                "✓ 다 봄",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(5.dp)
+                    .background(Color(0xCC2E7D32), RoundedCornerShape(5.dp))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
+        } else {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .background(Color(0x66000000))
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(p.fraction)
+                        .height(4.dp)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
     }
 }
 

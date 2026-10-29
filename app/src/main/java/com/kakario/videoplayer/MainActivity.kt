@@ -54,6 +54,11 @@ import com.kakario.videoplayer.ui.FtpTab
 import com.kakario.videoplayer.ui.LocalGridColumns
 import com.kakario.videoplayer.ui.LocalTab
 import com.kakario.videoplayer.ui.PlayerScreen
+import com.kakario.videoplayer.ui.PlayerPrefs
+import com.kakario.videoplayer.local.LocalStorage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
 import com.kakario.videoplayer.ui.SettingsScreen
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -114,6 +119,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
             var gridColumns by remember { mutableIntStateOf(settingsStore.gridColumns) }
+            var subtitleSize by remember { mutableStateOf(settingsStore.subtitleSize) }
+            var resumePlayback by remember { mutableStateOf(settingsStore.resumePlayback) }
+            var skipSeconds by remember { mutableIntStateOf(settingsStore.skipSeconds) }
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -185,6 +193,21 @@ class MainActivity : ComponentActivity() {
                             onGridColumnsChange = {
                                 gridColumns = it
                                 settingsStore.gridColumns = it
+                            },
+                            subtitleSize = subtitleSize,
+                            onSubtitleSizeChange = {
+                                subtitleSize = it
+                                settingsStore.subtitleSize = it
+                            },
+                            resumePlayback = resumePlayback,
+                            onResumeChange = {
+                                resumePlayback = it
+                                settingsStore.resumePlayback = it
+                            },
+                            skipSeconds = skipSeconds,
+                            onSkipSecondsChange = {
+                                skipSeconds = it
+                                settingsStore.skipSeconds = it
                             },
                             onClose = { settingsOpen = false },
                         )
@@ -289,10 +312,28 @@ class MainActivity : ComponentActivity() {
                 }
                 // 재생 화면은 목록 위에 덮어서 띄운다 (닫으면 보던 목록 그대로)
                 playing?.let { video ->
+                    val server = video.origin.server
+                    // 같은 서버가 열려 있으면 그 연결로 자막 목록·파일을 받는다
+                    val browser = if (server != null && ftpBrowser != null && openServer?.id == server.id) ftpBrowser else null
                     PlayerScreen(
                         origin = video.origin,
                         entry = video.entry,
                         nextEntry = video.next,
+                        prefs = PlayerPrefs(subtitleSize.scale, resumePlayback, skipSeconds),
+                        listFolder = { dir ->
+                            when {
+                                server == null -> LocalStorage.list(dir)
+                                browser != null -> browser.list(dir)
+                                else -> emptyList()
+                            }
+                        },
+                        readFile = { f ->
+                            when {
+                                server == null -> withContext(Dispatchers.IO) { File(f.path).readBytes() }
+                                browser != null -> browser.useFile(f.path, f.size) { it.read(0, f.size.toInt()) }
+                                else -> ByteArray(0)
+                            }
+                        },
                         onOpenNext = { next -> playing = video.copy(entry = next) },
                         onClose = { playing = null },
                     )

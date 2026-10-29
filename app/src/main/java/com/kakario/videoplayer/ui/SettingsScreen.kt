@@ -33,6 +33,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.data.ThemeMode
+import com.kakario.videoplayer.data.SubtitleSize
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Switch
 import kotlin.math.roundToInt
 
 @Composable
@@ -41,6 +44,12 @@ fun SettingsScreen(
     onThemeChange: (ThemeMode) -> Unit,
     gridColumns: Int,
     onGridColumnsChange: (Int) -> Unit,
+    subtitleSize: SubtitleSize,
+    onSubtitleSizeChange: (SubtitleSize) -> Unit,
+    resumePlayback: Boolean,
+    onResumeChange: (Boolean) -> Unit,
+    skipSeconds: Int,
+    onSkipSecondsChange: (Int) -> Unit,
     onClose: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -96,6 +105,62 @@ fun SettingsScreen(
                 Text("작게", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             GridPreview(cols)
+
+            Divider()
+
+            // ── 재생
+            SectionTitle("재생")
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = resumePlayback, onValueChange = onResumeChange)
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("이어보기", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        "다시 열면 보던 위치부터 재생 (화면에 '처음부터' 버튼이 잠깐 떠요)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = resumePlayback, onCheckedChange = null)
+            }
+            Text(
+                "두 번 탭·버튼으로 건너뛰는 시간",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            )
+            Row(Modifier.padding(horizontal = 12.dp)) {
+                listOf(5, 10, 15, 30).forEach { sec ->
+                    Row(
+                        Modifier
+                            .selectable(selected = sec == skipSeconds, onClick = { onSkipSecondsChange(sec) })
+                            .padding(end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = sec == skipSeconds, onClick = { onSkipSecondsChange(sec) })
+                        Text("${sec}초", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                    }
+                }
+            }
+
+            Divider()
+
+            // ── 자막
+            SectionTitle("자막 크기")
+            SubtitleSize.entries.forEach { size ->
+                RadioRow(size.label, selected = size == subtitleSize) { onSubtitleSizeChange(size) }
+            }
+            Text(
+                "다음에 영상을 열 때부터 적용돼요. 영상과 같은 이름의 .smi / .srt / .ass 자막은 자동으로 붙어요",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
 
             Divider()
 
