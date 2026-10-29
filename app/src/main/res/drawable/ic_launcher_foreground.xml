@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 재생(▶) 버튼 모양 아이콘 (108dp 캔버스, 가운데 72dp가 안전 영역) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M36,40 Q36,36 40,36 L68,36 Q72,36 72,40 L72,68 Q72,72 68,72 L40,72 Q36,72 36,68 Z" />
+    <path
+        android:fillColor="#FF1F6FE5"
+        android:pathData="M49,45 L63,54 L49,63 Z" />
+</vector>
