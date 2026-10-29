@@ -15,6 +15,10 @@ android {
         // GitHub 자동 빌드 번호를 버전으로 사용 (새 APK가 기존 앱 위에 업데이트되도록)
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+        // 갤럭시(64비트 ARM)용만 넣어 APK 크기를 줄인다
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     signingConfigs {
@@ -40,6 +44,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
     buildFeatures {
         compose = true
     }
@@ -57,4 +66,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // FTP 접속 라이브러리 (Apache Commons Net)
     implementation("commons-net:commons-net:3.11.1")
+    // 재생 엔진 (VLC) — MKV·AVI·AC3/DTS 음성·SMI/SRT/ASS 자막까지 폭넓게 지원
+    implementation("org.videolan.android:libvlc-all:3.7.6")
 }

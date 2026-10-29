@@ -1,7 +1,6 @@
 package com.kakario.videoplayer
 
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -54,6 +53,7 @@ import com.kakario.videoplayer.ui.FtpLocation
 import com.kakario.videoplayer.ui.FtpTab
 import com.kakario.videoplayer.ui.LocalGridColumns
 import com.kakario.videoplayer.ui.LocalTab
+import com.kakario.videoplayer.ui.PlayerScreen
 import com.kakario.videoplayer.ui.SettingsScreen
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -161,13 +161,11 @@ class MainActivity : ComponentActivity() {
                     favoriteStore.save(favorites)
                 }
 
+                // 지금 재생 중인 영상 (null이면 재생 화면 닫힘)
+                var playing by remember { mutableStateOf<OpenVideo?>(null) }
+
                 fun openVideo(video: OpenVideo) {
-                    // 재생 화면은 다음 단계에서 붙인다
-                    Toast.makeText(
-                        this@MainActivity,
-                        "'${video.entry.name}'\n재생 기능은 다음 업데이트에서 들어가요",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                    playing = video
                 }
 
                 if (settingsOpen) {
@@ -192,6 +190,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 } else {
+                Box(Modifier.fillMaxSize()) {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
@@ -287,6 +286,17 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
+                }
+                // 재생 화면은 목록 위에 덮어서 띄운다 (닫으면 보던 목록 그대로)
+                playing?.let { video ->
+                    PlayerScreen(
+                        origin = video.origin,
+                        entry = video.entry,
+                        nextEntry = video.next,
+                        onOpenNext = { next -> playing = video.copy(entry = next) },
+                        onClose = { playing = null },
+                    )
+                }
                 }
                 } // else (설정 화면이 아닐 때)
               }

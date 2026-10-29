@@ -174,38 +174,7 @@ class FtpBrowser(private val server: FtpServer) {
             dropConnection()
         }
 
-        // 한글 파일명 인코딩은 접속 전에 정해야 한다.
-        client.controlEncoding = server.encoding
-        client.connectTimeout = 10_000
-        client.setDefaultTimeout(15_000)
-        client.connect(server.host, server.port)
-
-        if (!FTPReply.isPositiveCompletion(client.replyCode)) {
-            val code = client.replyCode
-            dropConnection()
-            throw UserFacingException("서버가 접속을 거부했어요 (응답 $code).")
-        }
-        client.soTimeout = 20_000
-        client.setDataTimeout(Duration.ofSeconds(20))
-
-        val user = server.user.ifBlank { "anonymous" }
-        val pass = if (server.user.isBlank()) "guest@" else server.password
-        if (!client.login(user, pass)) {
-            dropConnection()
-            throw UserFacingException("로그인에 실패했어요. 아이디와 비밀번호를 확인해 주세요.")
-        }
-        if (server.encoding.equals("UTF-8", ignoreCase = true)) {
-            // 지원하지 않는 서버는 그냥 무시하므로 보내도 안전하다.
-            try {
-                client.sendCommand("OPTS UTF8 ON")
-            } catch (_: IOException) {
-            }
-        }
-        client.setFileType(FTP.BINARY_FILE_TYPE)
-        // 외부(공유기 너머)에서 접속할 때는 패시브 모드가 필요하다.
-        // commons-net은 서버가 내부 IP(192.168.x.x)를 알려줘도 접속한 주소로 바꿔서 연결해준다.
-        client.enterLocalPassiveMode()
-        client.isRemoteVerificationEnabled = false
+        client.connectAndLogin(server) { dropConnection() }
 
         homePath = client.printWorkingDirectory()?.takeIf { it.isNotBlank() } ?: "/"
     }
@@ -216,4 +185,43 @@ class FtpBrowser(private val server: FtpServer) {
         } catch (_: IOException) {
         }
     }
+}
+
+/**
+ * 접속 + 로그인 + 전송 설정 (목록용 연결과 영상 스트리밍용 연결이 함께 쓴다).
+ * 실패하면 onFail()로 연결을 정리한 뒤 한국어 오류를 던진다.
+ */
+fun FTPClient.connectAndLogin(server: FtpServer, onFail: () -> Unit = { runCatching { disconnect() } }) {
+    // 한글 파일명 인코딩은 접속 전에 정해야 한다.
+    controlEncoding = server.encoding
+    connectTimeout = 10_000
+    setDefaultTimeout(15_000)
+    connect(server.host, server.port)
+
+    if (!FTPReply.isPositiveCompletion(replyCode)) {
+        val code = replyCode
+        onFail()
+        throw UserFacingException("서버가 접속을 거부했어요 (응답 $code).")
+    }
+    soTimeout = 20_000
+    setDataTimeout(Duration.ofSeconds(20))
+
+    val user = server.user.ifBlank { "anonymous" }
+    val pass = if (server.user.isBlank()) "guest@" else server.password
+    if (!login(user, pass)) {
+        onFail()
+        throw UserFacingException("로그인에 실패했어요. 아이디와 비밀번호를 확인해 주세요.")
+    }
+    if (server.encoding.equals("UTF-8", ignoreCase = true)) {
+        // 지원하지 않는 서버는 그냥 무시하므로 보내도 안전하다.
+        try {
+            sendCommand("OPTS UTF8 ON")
+        } catch (_: IOException) {
+        }
+    }
+    setFileType(FTP.BINARY_FILE_TYPE)
+    // 외부(공유기 너머)에서 접속할 때는 패시브 모드가 필요하다.
+    // commons-net은 서버가 내부 IP(192.168.x.x)를 알려줘도 접속한 주소로 바꿔서 연결해준다.
+    enterLocalPassiveMode()
+    isRemoteVerificationEnabled = false
 }
