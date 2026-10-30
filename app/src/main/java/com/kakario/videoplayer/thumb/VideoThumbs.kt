@@ -212,18 +212,52 @@ class VideoThumbs private constructor(context: Context) {
     }
 
     private fun extractLocal(entry: FileEntry): Bitmap? {
-        val r = MediaMetadataRetriever()
-        return try {
-            r.setDataSource(entry.path)
-            pickFrame(r, key = null, entry = entry)
-        } catch (_: Exception) {
-            null
-        } finally {
-            runCatching { r.release() }
+        if (entry.extension !in VLC_ONLY) {
+            val r = MediaMetadataRetriever()
+            val bmp = try {
+                r.setDataSource(entry.path)
+                pickFrame(r, key = null, entry = entry)
+            } catch (_: Exception) {
+                null
+            } finally {
+                runCatching { r.release() }
+            }
+            if (bmp != null) return bmp
         }
+        // 안드로이드 기본 추출기가 못 여는 형식 → VLC 엔진으로
+        return extractVlc(MediaOrigin(null), entry, android.net.Uri.fromFile(File(entry.path)))
     }
 
     private fun extractFtp(server: FtpServer, entry: FileEntry): Bitmap? {
+        val bmp = if (entry.extension in VLC_ONLY) null else extractFtpRetriever(server, entry)
+        if (bmp != null) return bmp
+        // AVI·WMV 등은 VLC 엔진으로 — 재생할 때와 같은 폰 안 중계 주소로 연다
+        val url = com.kakario.videoplayer.ftp.FtpStreamServer.urlFor(server, entry.path, entry.size)
+        return try {
+            extractVlc(MediaOrigin(server), entry, android.net.Uri.parse(url))
+        } finally {
+            com.kakario.videoplayer.ftp.FtpStreamServer.release(url)
+        }
+    }
+
+    /** VLC로 장면 뽑기 (한 번에 하나만). 어두우면 조금 뒤 장면을 더 본다. */
+    private fun extractVlc(origin: MediaOrigin, entry: FileEntry, uri: android.net.Uri): Bitmap? = synchronized(vlcLock) {
+        val result = try {
+            vlc.grab(
+                uri = uri,
+                times = { duration -> candidateTimes(duration) },
+                good = { luminance(it) >= DARK_LIMIT },
+            )
+        } catch (_: Throwable) {
+            return null
+        }
+        if (result.durationMs > 0) metaPrefs.edit().putLong(hash(key(origin, entry)), result.durationMs).apply()
+        val best = result.frames.maxByOrNull { luminance(it.second) }?.second
+        result.frames.forEach { if (it.second !== best) it.second.recycle() }
+        return best?.let { scaleDown(it) }
+    }
+
+    private fun extractFtpRetriever(server: FtpServer, entry: FileEntry): Bitmap? {
         val reader = ftpReaders.getOrPut(server.id) { FtpRangeReader(server) }
         val source = FtpMediaSource(reader, entry.path, entry.size, deadlineMs = System.currentTimeMillis() + 60_000)
         val r = MediaMetadataRetriever()
@@ -248,16 +282,7 @@ class VideoThumbs private constructor(context: Context) {
         val origin = MediaOrigin(server)
         if (duration > 0) metaPrefs.edit().putLong(hash(key ?: key(origin, entry)), duration).apply()
 
-        val t = thumbTime
-        var base = if (t.percent > 0 && duration > 0) duration * t.percent / 100 else t.ms
-        // 짧은 영상은 가운데 장면
-        if (duration > 0 && base >= duration * 0.9) base = duration / 2
-        val candidates = buildList {
-            add(base)
-            add(base + 15_000)
-            add(base + 45_000)
-            if (duration > 0) add(duration / 4)
-        }.filter { duration <= 0 || it < duration }.distinct().take(4)
+        val candidates = candidateTimes(duration)
 
         var best: Bitmap? = null
         var bestLum = -1f
@@ -278,6 +303,20 @@ class VideoThumbs private constructor(context: Context) {
             best = frameAt(r, 0)
         }
         return best
+    }
+
+    /** 설정한 시점(기본 30초) → 15초 뒤 → 45초 뒤 → 영상 1/4 지점 순으로 후보. */
+    private fun candidateTimes(duration: Long): List<Long> {
+        val t = thumbTime
+        var base = if (t.percent > 0 && duration > 0) duration * t.percent / 100 else t.ms
+        // 짧은 영상은 가운데 장면
+        if (duration > 0 && base >= duration * 0.9) base = duration / 2
+        return buildList {
+            add(base)
+            add(base + 15_000)
+            add(base + 45_000)
+            if (duration > 0) add(duration / 4)
+        }.filter { duration <= 0 || it < duration }.distinct().take(4)
     }
 
     private fun frameAt(r: MediaMetadataRetriever, ms: Long): Bitmap? = try {
@@ -340,7 +379,12 @@ class VideoThumbs private constructor(context: Context) {
         }
     }
 
+    private val vlc by lazy { VlcThumbnailer(appContext) }
+    private val vlcLock = Any()
+
     companion object {
+        /** 안드로이드 기본 추출기로는 안 되는 형식 — 바로 VLC로 간다. */
+        private val VLC_ONLY = setOf("avi", "wmv", "asf", "flv", "rm", "rmvb", "divx", "vob", "ogv", "mpg", "mpeg")
         private const val THUMB_W = 384
         private const val THUMB_H = 216
         /** 이보다 어두우면 다른 장면을 더 찾아본다 (0~255). */
