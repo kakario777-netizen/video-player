@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
+import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.MediaPlayer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -92,12 +93,12 @@ internal class VlcThumbnailer(private val context: Context) {
             val deadline = System.currentTimeMillis() + timeoutMs
 
             // 재생이 시작되어 길이를 알 때까지 기다림
-            while (System.currentTimeMillis() < deadline && mp.length <= 0 && mp.playerState != Media.State.Error) {
+            while (System.currentTimeMillis() < deadline && mp.length <= 0 && mp.playerState != IMedia.State.Error) {
                 drain(reader)
                 Thread.sleep(80)
             }
             duration = mp.length.coerceAtLeast(0)
-            if (mp.playerState == Media.State.Error) return Result(emptyList(), duration)
+            if (mp.playerState == IMedia.State.Error) return Result(emptyList(), duration)
 
             for (t in times(duration)) {
                 if (System.currentTimeMillis() > deadline) break
