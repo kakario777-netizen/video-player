@@ -70,6 +70,7 @@ class AiSubtitleSession(
         private set
     /** 화면 상태 안내 (null이면 조용). */
     var status by mutableStateOf<String?>(null)
+        private set
     /** 지금 하는 일 (소리 받는 중 / 음성 인식 중 / 번역 중)과 시작 시각 — 화면에 경과 시간 표시. */
     var stage by mutableStateOf<String?>(null)
         private set
@@ -79,7 +80,6 @@ class AiSubtitleSession(
         stage = s
         stageSince = System.currentTimeMillis()
     }
-        private set
     /** 지금 위치부터 끊김 없이 자막이 준비된 지점(ms). */
     var readyUntilMs by mutableLongStateOf(0L)
         private set
