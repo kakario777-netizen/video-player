@@ -218,6 +218,11 @@ fun SettingsScreen(
             Divider()
 
             // ── 자막
+            SectionTitle("자막 · 오프라인 AI 자동 자막")
+            AiSubtitleSettings()
+
+            Divider()
+
             SectionTitle("자막 크기")
             SubtitleSize.entries.forEach { size ->
                 RadioRow(size.label, selected = size == subtitleSize) { onSubtitleSizeChange(size) }

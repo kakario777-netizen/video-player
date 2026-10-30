@@ -77,6 +77,11 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import com.kakario.videoplayer.data.PlaybackStore
+import com.kakario.videoplayer.data.SettingsStore
+import com.kakario.videoplayer.ai.AiModel
+import com.kakario.videoplayer.ai.AiShowMode
+import com.kakario.videoplayer.ai.AiSubtitleSession
+import com.kakario.videoplayer.ai.ModelManager
 import com.kakario.videoplayer.ftp.FtpStreamServer
 import com.kakario.videoplayer.model.FileEntry
 import com.kakario.videoplayer.model.MediaOrigin
@@ -219,6 +224,7 @@ fun PlayerScreen(
     var aspect by remember { mutableIntStateOf(0) }
     var subDelayMs by remember { mutableLongStateOf(0L) }
     var externalSubs by remember { mutableIntStateOf(0) }
+    var subSearchDone by remember { mutableStateOf(false) }
     // 받아둔 자막 파일 (디코더를 바꿔 다시 열 때 다시 붙이기 위해)
     var subFiles by remember { mutableStateOf<List<File>>(emptyList()) }
     // 하드웨어 디코딩이 실패하면 소프트웨어로 한 번 더 시도
@@ -344,7 +350,7 @@ fun PlayerScreen(
         } else 0L
         timeMs = startAt
         lengthMs = saved.lengthMs
-        ended = false; subDelayMs = 0; externalSubs = 0
+        ended = false; subDelayMs = 0; externalSubs = 0; subSearchDone = false
         openMedia(startAt, hw = true)
 
         // 같은 폴더의 자막을 찾아 받아서 붙인다
@@ -366,6 +372,8 @@ fun PlayerScreen(
                 throw e
             } catch (_: Exception) {
                 // 자막을 못 받아도 영상은 계속 본다
+            } finally {
+                subSearchDone = true
             }
         }
 
@@ -397,6 +405,40 @@ fun PlayerScreen(
             onOpenNext(nextEntry)
         } else {
             countdown = null
+        }
+    }
+
+    // ── 오프라인 AI 자막 (폰 안에서만 동작)
+    val aiStore = remember { SettingsStore(context) }
+    val aiModels = remember { ModelManager(context) }
+    val whisperModel = remember { AiModel.entries.firstOrNull { it.name == aiStore.aiWhisperModel } ?: AiModel.WHISPER_TURBO }
+    val whisperReady = remember(key) { aiModels.isReady(whisperModel) }
+    var aiOn by remember(key) { mutableStateOf(false) }
+    var aiShow by remember { mutableStateOf(AiShowMode.entries.firstOrNull { it.name == aiStore.aiShowMode } ?: AiShowMode.BOTH) }
+    var aiSession by remember(key) { mutableStateOf<AiSubtitleSession?>(null) }
+    // 자막 파일 찾기가 끝나면, 설정에 따라 자동으로 켠다
+    LaunchedEffect(key, subSearchDone) {
+        if (subSearchDone && aiStore.aiSubtitles && whisperReady &&
+            (!aiStore.aiOnlyWithoutSubs || externalSubs == 0)
+        ) {
+            aiOn = true
+        }
+    }
+    DisposableEffect(key, aiOn) {
+        if (!aiOn || !whisperReady) return@DisposableEffect onDispose { }
+        val llm = if (aiStore.aiTranslate && aiModels.isReady(AiModel.QWEN3_4B)) aiModels.file(AiModel.QWEN3_4B) else null
+        val session = AiSubtitleSession(
+            context, key,
+            source = streamUrl ?: entry.path,
+            isUrl = streamUrl != null,
+            whisperModel = aiModels.file(whisperModel),
+            llmModel = llm,
+        )
+        aiSession = session
+        session.start(scope) { timeMs.coerceAtLeast(0) }
+        onDispose {
+            session.stop()
+            aiSession = null
         }
     }
 
@@ -579,6 +621,67 @@ fun PlayerScreen(
 
         if (buffering && error == null && !ended && !inPip) {
             CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White)
+        }
+
+        // ── AI 자막 표시
+        aiSession?.let { ai ->
+            val cue = ai.cueAt(timeMs)
+            if (cue != null) {
+                val ko = cue.ko
+                val (main, second) = when (aiShow) {
+                    AiShowMode.ORIGINAL -> cue.text to null
+                    AiShowMode.KOREAN -> (ko ?: cue.text) to null
+                    AiShowMode.BOTH -> if (ko != null) ko to cue.text else cue.text to null
+                }
+                val scale = prefs.subtitleScale / 100f
+                Column(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(start = 24.dp, end = 24.dp, bottom = if (controlsVisible && !inPip) 120.dp else if (inPip) 4.dp else 28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        main,
+                        color = Color.White,
+                        fontSize = (if (inPip) 11f else 19f * scale).sp,
+                        textAlign = TextAlign.Center,
+                        style = androidx.compose.ui.text.TextStyle(
+                            shadow = androidx.compose.ui.graphics.Shadow(Color.Black, Offset(2f, 2f), 6f),
+                        ),
+                        modifier = Modifier
+                            .background(Color(0x55000000), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 3.dp),
+                    )
+                    if (second != null && !inPip) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            second,
+                            color = Color(0xFFE0E0E0),
+                            fontSize = (14f * scale).sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .background(Color(0x55000000), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+            // 준비 상태 안내 (지금 위치에 자막이 아직 없을 때)
+            val msg = ai.failed ?: if (timeMs >= ai.readyUntilMs - 500) ai.status else null
+            if (msg != null && !inPip) {
+                Text(
+                    "🤖 $msg",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(top = 56.dp)
+                        .background(Color(0x99000000), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                )
+            }
         }
 
         hint?.takeIf { !inPip }?.let {
@@ -828,7 +931,29 @@ fun PlayerScreen(
                 ) {
                     when (s) {
                         Sheet.SUBTITLE -> {
-                            SheetTitle("자막")
+                            SheetTitle("AI 자막 (오프라인)")
+                            if (!whisperReady) {
+                                SheetNote("설정 > 자막에서 음성인식 모델을 먼저 받아 주세요.\n폰 안에서만 동작하고 서버 연결은 전혀 없어요.")
+                            } else {
+                                SheetOption("켜기 — 소리를 듣고 자막 만들기", selected = aiOn) {
+                                    if (!aiOn) {
+                                        aiOn = true
+                                        player.setSpuTrack(-1) // 파일 자막과 겹치지 않게
+                                    }
+                                }
+                                SheetOption("끄기", selected = !aiOn) { aiOn = false }
+                                if (aiOn) {
+                                    aiSession?.language?.let { SheetNote("감지한 언어: ${langLabel(it)}") }
+                                    AiShowMode.entries.forEach { m ->
+                                        SheetOption(m.label, selected = aiShow == m) {
+                                            aiShow = m
+                                            aiStore.aiShowMode = m.name
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            SheetTitle("자막 파일")
                             val tracks = remember(externalSubs) { player.spuTracks?.toList() ?: emptyList() }
                             if (tracks.isEmpty()) {
                                 SheetNote("이 영상에는 자막이 없어요.\n영상과 같은 이름의 .smi / .srt 파일을 같은 폴더에 두면 자동으로 붙어요.")
@@ -1091,4 +1216,12 @@ fun formatTime(ms: Long): String {
     val m = (total % 3600) / 60
     val s = total % 60
     return if (h > 0) String.format("%d:%02d:%02d", h, m, s) else String.format("%02d:%02d", m, s)
+}
+
+private fun langLabel(code: String): String = when (code) {
+    "ko" -> "한국어"
+    "ja" -> "일본어"
+    "zh" -> "중국어"
+    "en" -> "영어"
+    else -> code
 }

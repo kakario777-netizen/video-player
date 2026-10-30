@@ -149,4 +149,41 @@ class SettingsStore(context: Context) {
         set(value) {
             prefs.edit().putString("sort", value.name).apply()
         }
+
+    // ── 오프라인 AI 자막
+
+    /** 재생할 때 AI로 자막을 만들지 (폰 안에서만 동작). */
+    var aiSubtitles: Boolean
+        get() = prefs.getBoolean("ai_subs", false)
+        set(value) {
+            prefs.edit().putBoolean("ai_subs", value).apply()
+        }
+
+    /** 쓸 음성인식 모델 (AiModel 이름). */
+    var aiWhisperModel: String
+        get() = prefs.getString("ai_whisper", "WHISPER_TURBO") ?: "WHISPER_TURBO"
+        set(value) {
+            prefs.edit().putString("ai_whisper", value).apply()
+        }
+
+    /** 외국어를 한국어로 번역할지. */
+    var aiTranslate: Boolean
+        get() = prefs.getBoolean("ai_translate", true)
+        set(value) {
+            prefs.edit().putBoolean("ai_translate", value).apply()
+        }
+
+    /** AI 자막 보여주는 방식 (AiShowMode 이름). */
+    var aiShowMode: String
+        get() = prefs.getString("ai_show", "BOTH") ?: "BOTH"
+        set(value) {
+            prefs.edit().putString("ai_show", value).apply()
+        }
+
+    /** 자막 파일이 이미 있으면 AI 자막을 만들지 않기. */
+    var aiOnlyWithoutSubs: Boolean
+        get() = prefs.getBoolean("ai_only_nosubs", true)
+        set(value) {
+            prefs.edit().putBoolean("ai_only_nosubs", value).apply()
+        }
 }
