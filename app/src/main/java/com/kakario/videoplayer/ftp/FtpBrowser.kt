@@ -110,6 +110,17 @@ class FtpBrowser(private val server: FtpServer) {
         return if (read < length) buf.copyOf(read) else buf
     }
 
+    /** 서버에 파일 하나를 올린다 (AI 자막 파일 저장용). */
+    suspend fun upload(path: String, bytes: ByteArray) = ftp {
+        ensureConnected()
+        val ok = bytes.inputStream().use { client.storeFile(path, it) }
+        if (!ok) {
+            throw UserFacingException(
+                "서버에 저장하지 못했어요 (응답 ${client.replyCode}).\nFTP 계정에 쓰기 권한이 있는지 확인해 주세요."
+            )
+        }
+    }
+
     /** 서버에서 파일 하나를 지운다. */
     suspend fun delete(path: String) = ftp {
         ensureConnected()

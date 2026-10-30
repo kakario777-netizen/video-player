@@ -44,7 +44,19 @@ class AiSubtitleSession(
     private val whisperModel: File,
     /** null이면 번역하지 않음. */
     private val llmModel: File?,
+    /** 영상 전체 자막을 다 만들었을 때 (파일로 저장). 저장했으면 true. 작업 스레드에서 불린다. */
+    private val onComplete: suspend (List<AiCue>, String?) -> Boolean = { _, _ -> false },
 ) {
+    /** 완성본을 파일로 저장했는지 (다시 저장하지 않게). */
+    @Volatile private var exported = false
+
+    /** 전체 중 만든 비율 (0~1). */
+    val progress: Float
+        get() {
+            if (durationMs <= 0) return 0f
+            val total = ((durationMs - 1) / CHUNK_MS + 1).toInt()
+            return (done.size.toFloat() / total).coerceIn(0f, 1f)
+        }
     private val appCtx = context.applicationContext
     private val cacheFile = File(File(appCtx.filesDir, "aisubs").apply { mkdirs() }, sha1(videoKey) + ".json")
 
@@ -63,7 +75,7 @@ class AiSubtitleSession(
     var failed by mutableStateOf<String?>(null)
         private set
 
-    private val done = HashSet<Int>()
+    private val done: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var durationMs = 0L
     private var job: Job? = null
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "ai-subtitles").apply { priority = Thread.NORM_PRIORITY - 1 } }
@@ -102,9 +114,20 @@ class AiSubtitleSession(
                     updateReady(ph)
                     val first = (ph / CHUNK_MS).toInt()
                     val last = if (durationMs > 0) ((durationMs - 1) / CHUNK_MS).toInt() else first + LOOKAHEAD
-                    val next = (first..minOf(first + LOOKAHEAD, last)).firstOrNull { it !in done }
+                    // 지금 보는 위치부터 끝까지 먼저, 그다음 앞쪽 빈 곳 (영상 전체를 다 만든다)
+                    val next = (first..last).firstOrNull { it !in done }
+                        ?: (0 until minOf(first, last + 1)).firstOrNull { it !in done }
                     if (next == null) {
                         status = null
+                        // 다 만들었으면 자막 파일로 저장 (한 번만)
+                        if (durationMs > 0 && !exported) {
+                            val list = cues
+                            val ok = runCatching { onComplete(list, language) }.getOrDefault(false)
+                            if (ok) {
+                                exported = true
+                                saveCache()
+                            }
+                        }
                         delay(1000)
                         continue
                     }
@@ -262,6 +285,7 @@ class AiSubtitleSession(
         runCatching {
             val o = JSONObject(cacheFile.readText())
             language = o.optString("lang").ifBlank { null }
+            exported = o.optBoolean("exported", false)
             val d = o.optJSONArray("done") ?: JSONArray()
             for (i in 0 until d.length()) done += d.getInt(i)
             val arr = o.optJSONArray("cues") ?: JSONArray()
@@ -283,6 +307,7 @@ class AiSubtitleSession(
         runCatching {
             val o = JSONObject()
             o.put("lang", language ?: "")
+            o.put("exported", exported)
             o.put("done", JSONArray(done.sorted()))
             val arr = JSONArray()
             cues.forEach { c ->
@@ -312,4 +337,30 @@ class AiSubtitleSession(
             File(context.filesDir, "aisubs").listFiles()?.forEach { it.delete() }
         }
     }
+
+}
+
+/** AI 자막을 SRT 자막 파일 내용(UTF-8)으로. mode에 따라 번역/원어/두 줄. */
+fun aiCuesToSrt(cues: List<AiCue>, mode: AiShowMode): ByteArray {
+    fun ts(ms: Long): String {
+        val h = ms / 3_600_000
+        val m = (ms / 60_000) % 60
+        val s = (ms / 1000) % 60
+        val x = ms % 1000
+        return String.format("%02d:%02d:%02d,%03d", h, m, s, x)
+    }
+    val sb = StringBuilder()
+    var n = 1
+    cues.sortedBy { it.startMs }.forEach { c ->
+        val text = when (mode) {
+            AiShowMode.ORIGINAL -> c.text
+            AiShowMode.KOREAN -> c.ko ?: c.text
+            AiShowMode.BOTH -> if (c.ko != null) c.ko + "\n" + c.text else c.text
+        }
+        if (text.isBlank()) return@forEach
+        sb.append(n++).append("\r\n")
+            .append(ts(c.startMs)).append(" --> ").append(ts(c.endMs)).append("\r\n")
+            .append(text.replace("\n", "\r\n")).append("\r\n\r\n")
+    }
+    return byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + sb.toString().toByteArray(Charsets.UTF_8)
 }

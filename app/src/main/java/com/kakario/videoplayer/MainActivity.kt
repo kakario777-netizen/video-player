@@ -493,6 +493,13 @@ class MainActivity : ComponentActivity() {
                                 else -> ByteArray(0)
                             }
                         },
+                        writeFile = { path, bytes ->
+                            when {
+                                server == null -> withContext(Dispatchers.IO) { File(path).writeBytes(bytes) }
+                                browser != null -> browser.upload(path, bytes)
+                                else -> throw IllegalStateException("서버 연결이 없어요")
+                            }
+                        },
                         onOpenNext = { next -> playing = video.copy(entry = next) },
                         onClose = { playing = null },
                     )

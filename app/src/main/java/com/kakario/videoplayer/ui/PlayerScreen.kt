@@ -82,6 +82,7 @@ import com.kakario.videoplayer.ai.AiModel
 import com.kakario.videoplayer.ai.AiShowMode
 import com.kakario.videoplayer.ai.AiSubtitleSession
 import com.kakario.videoplayer.ai.ModelManager
+import com.kakario.videoplayer.ai.aiCuesToSrt
 import com.kakario.videoplayer.ftp.FtpStreamServer
 import com.kakario.videoplayer.model.FileEntry
 import com.kakario.videoplayer.model.MediaOrigin
@@ -158,6 +159,8 @@ fun PlayerScreen(
     listFolder: suspend (String) -> List<FileEntry>,
     /** 작은 파일(자막) 통째로 읽기. */
     readFile: suspend (FileEntry) -> ByteArray,
+    /** 영상 옆에 파일 저장 (AI 자막 완성본). 경로, 내용. */
+    writeFile: suspend (String, ByteArray) -> Unit = { _, _ -> },
     onOpenNext: (FileEntry) -> Unit,
     onClose: () -> Unit,
     /** 작은 창(PIP)으로 보는 중이면 버튼을 모두 숨긴다. */
@@ -318,6 +321,7 @@ fun PlayerScreen(
     val key = remember(entry.path, entry.size) { store.keyFor(origin, entry) }
     val currentListFolder by rememberUpdatedState(listFolder)
     val currentReadFile by rememberUpdatedState(readFile)
+    val currentWriteFile by rememberUpdatedState(writeFile)
     val server = origin.server
     val streamUrl = remember(key) { if (server != null) FtpStreamServer.urlFor(server, entry.path, entry.size) else null }
 
@@ -433,6 +437,25 @@ fun PlayerScreen(
             isUrl = streamUrl != null,
             whisperModel = aiModels.file(whisperModel),
             llmModel = llm,
+            onComplete = { list, _ ->
+                // 영상 전체를 다 만들면 영상 옆에 "영상이름.ai.srt"로 저장 → 다음엔 일반 자막처럼 바로 붙는다
+                if (list.isEmpty()) {
+                    true
+                } else {
+                    val base = entry.path.substringBeforeLast('.')
+                    val path = "$base.ai.srt"
+                    try {
+                        currentWriteFile(path, aiCuesToSrt(list, aiShow))
+                        showHint("AI 자막을 파일로 저장했어요: ${path.substringAfterLast('/')}")
+                        true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        showHint("AI 자막 파일 저장 실패: ${e.message ?: "쓰기 권한 확인"}")
+                        true // 계속 다시 시도하지 않게 (자막은 앱 안에 저장돼 있음)
+                    }
+                }
+            },
         )
         aiSession = session
         session.start(scope) { timeMs.coerceAtLeast(0) }
@@ -669,6 +692,20 @@ fun PlayerScreen(
             }
             // 준비 상태 안내 (지금 위치에 자막이 아직 없을 때)
             val msg = ai.failed ?: if (timeMs >= ai.readyUntilMs - 500) ai.status else null
+            // 조작 버튼이 보일 때는 전체 진행률도 (예: AI 자막 42% · 다 만들면 파일로 저장)
+            if (controlsVisible && !inPip && ai.failed == null && ai.progress in 0.001f..0.999f) {
+                Text(
+                    "🤖 AI 자막 전체 ${(ai.progress * 100).toInt()}% · 다 만들면 자막 파일로 저장",
+                    color = Color(0xFFCCCCCC),
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(top = if (msg != null) 84.dp else 56.dp)
+                        .background(Color(0x77000000), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 3.dp),
+                )
+            }
             if (msg != null && !inPip) {
                 Text(
                     "🤖 $msg",
