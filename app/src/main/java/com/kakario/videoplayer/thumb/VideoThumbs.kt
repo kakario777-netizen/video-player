@@ -280,19 +280,63 @@ class VideoThumbs private constructor(context: Context) {
             }
             if (bmp != null) return bmp
         }
-        // 안드로이드 기본 추출기가 못 여는 형식 → VLC 엔진으로
+        // 안드로이드 기본 추출기가 못 여는 형식 → FFmpeg 추출기 → 그래도 안 되면 VLC
+        extractFfmpeg(MediaOrigin(null), entry, entry.path)?.let { return it }
         return extractVlc(MediaOrigin(null), entry, android.net.Uri.fromFile(File(entry.path)))
     }
 
     private fun extractFtp(server: FtpServer, entry: FileEntry): Bitmap? {
         val bmp = if (entry.extension in VLC_ONLY) null else extractFtpRetriever(server, entry)
         if (bmp != null) return bmp
-        // AVI·WMV 등은 VLC 엔진으로 — 재생할 때와 같은 폰 안 중계 주소로 연다
+        // AVI·WMV·MPG·VOB 등은 FFmpeg 추출기로 — 재생할 때와 같은 폰 안 중계 주소로 연다
         val url = com.kakario.videoplayer.ftp.FtpStreamServer.urlFor(server, entry.path, entry.size)
         return try {
-            extractVlc(MediaOrigin(server), entry, android.net.Uri.parse(url))
+            extractFfmpeg(MediaOrigin(server), entry, url)
+                ?: extractVlc(MediaOrigin(server), entry, android.net.Uri.parse(url))
         } finally {
             com.kakario.videoplayer.ftp.FtpStreamServer.release(url)
+        }
+    }
+
+    /**
+     * FFmpeg 추출기(코덱 거의 전부 지원)로 장면 뽑기. source는 파일 경로 또는 http 주소.
+     * 안드로이드 기본 추출기와 같은 방식으로 시점 후보·어두운 장면 건너뛰기를 적용한다.
+     */
+    private fun extractFfmpeg(origin: MediaOrigin, entry: FileEntry, source: String): Bitmap? {
+        val r = wseemann.media.FFmpegMediaMetadataRetriever()
+        return try {
+            r.setDataSource(source)
+            val duration = r.extractMetadata(wseemann.media.FFmpegMediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+            if (duration > 0) metaPrefs.edit().putLong(hash(key(origin, entry)), duration).apply()
+            var best: Bitmap? = null
+            var bestLum = -1f
+            for (ms in candidateTimes(duration)) {
+                val raw = try {
+                    r.getFrameAtTime(ms * 1000, wseemann.media.FFmpegMediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                } catch (_: Throwable) {
+                    null
+                } ?: continue
+                val frame = scaleDown(raw)
+                val lum = luminance(frame)
+                if (lum > bestLum) {
+                    best?.recycle()
+                    best = frame
+                    bestLum = lum
+                } else {
+                    frame.recycle()
+                }
+                if (lum >= DARK_LIMIT) break
+            }
+            if (best == null) {
+                // 시점을 못 찾으면 아무 장면이라도 (길이를 모르는 MPG 등)
+                best = runCatching { r.frameAtTime }.getOrNull()?.let { scaleDown(it) }
+            }
+            best
+        } catch (_: Throwable) {
+            null
+        } finally {
+            runCatching { r.release() }
         }
     }
 
@@ -442,8 +486,11 @@ class VideoThumbs private constructor(context: Context) {
     private val vlcLock = Any()
 
     companion object {
-        /** 안드로이드 기본 추출기로는 안 되는 형식 — 바로 VLC로 간다. */
-        private val VLC_ONLY = setOf("avi", "wmv", "asf", "flv", "rm", "rmvb", "divx", "vob", "ogv", "mpg", "mpeg")
+        /** 안드로이드 기본 추출기로는 안 되는 형식 — 바로 FFmpeg(→ VLC)로 간다. */
+        private val VLC_ONLY = setOf(
+            "avi", "wmv", "asf", "flv", "rm", "rmvb", "divx", "xvid", "vob", "ogv", "mpg", "mpeg", "mpe",
+            "m2v", "mod", "tod", "k3g", "skm",
+        )
         private const val THUMB_W = 384
         private const val THUMB_H = 216
         /** 이보다 어두우면 다른 장면을 더 찾아본다 (0~255). */

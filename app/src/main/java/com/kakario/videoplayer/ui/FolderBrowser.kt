@@ -101,6 +101,7 @@ fun FolderBrowser(
     var deleteTarget by remember { mutableStateOf<FileEntry?>(null) }
     var deleteStep by remember { mutableIntStateOf(0) }
     var sortMenu by remember { mutableStateOf(false) }
+    var rebuildAsk by remember { mutableStateOf<RebuildAsk?>(null) }
     // 여러 개 고르기: 고른 항목 경로들 (selecting이 켜져 있으면 고르기 모드)
     var selecting by remember(path) { mutableStateOf(false) }
     var selected by remember(path) { mutableStateOf<Set<String>>(emptySet()) }
@@ -321,13 +322,25 @@ fun FolderBrowser(
                             d.name to loader
                         }
                         val videos = chosen.filter { it.isVideo }
-                        thumbs?.rebuild(origin, folders, videos, force = true)
-                        selecting = false
-                        selected = emptySet()
-                        toast(
-                            if (folders.isNotEmpty()) "고른 폴더 안 영상까지 썸네일을 다시 만들어요 — 위쪽에 진행 표시"
-                            else "썸네일을 다시 만들어요"
-                        )
+                        // 한 개만 고른 영상이면 바로, 여러 개·폴더면 두 번 확인
+                        if (folders.isEmpty() && videos.size == 1) {
+                            thumbs?.rebuild(origin, emptyList(), videos, force = true)
+                            selecting = false
+                            selected = emptySet()
+                            toast("썸네일을 다시 만들어요")
+                        } else {
+                            rebuildAsk = RebuildAsk(
+                                description = buildString {
+                                    if (folders.isNotEmpty()) append("폴더 ${folders.size}개(안의 영상 전부)")
+                                    if (folders.isNotEmpty() && videos.isNotEmpty()) append(" + ")
+                                    if (videos.isNotEmpty()) append("영상 ${videos.size}개")
+                                },
+                                folders = folders,
+                                videos = videos,
+                                step = 1,
+                                fromSelection = true,
+                            )
+                        }
                     },
                 ) { Text("썸네일 다시 만들기") }
             }
@@ -385,8 +398,13 @@ fun FolderBrowser(
                         MenuItem("🔄  이 폴더 썸네일 모두 다시 만들기") {
                             menuFor = null
                             val loader: suspend () -> List<FileEntry> = { currentLoad(target.path) }
-                            thumbs?.rebuild(origin, listOf(target.name to loader), emptyList(), force = true)
-                            toast("'${target.name}' 썸네일을 처음부터 다시 만들어요")
+                            rebuildAsk = RebuildAsk(
+                                description = "'${target.name}' 폴더 안의 영상 전부",
+                                folders = listOf(target.name to loader),
+                                videos = emptyList(),
+                                step = 1,
+                                fromSelection = false,
+                            )
                         }
                         MenuItem("🖼️  이 폴더 썸네일 모두 만들기 (없는 것만)") {
                             menuFor = null
@@ -417,6 +435,42 @@ fun FolderBrowser(
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { menuFor = null }) { Text("닫기") } },
+        )
+    }
+
+    // ── 썸네일 여러 개 다시 만들기: 두 번 확인
+    rebuildAsk?.let { ask ->
+        AlertDialog(
+            onDismissRequest = { rebuildAsk = null },
+            title = { Text(if (ask.step == 1) "썸네일을 다시 만들까요?" else "정말 다시 만들까요?") },
+            text = {
+                Text(
+                    if (ask.step == 1) "${ask.description}의 썸네일을 지우고 처음부터 다시 만들어요."
+                    else "지금 있는 썸네일은 사라지고, 다 만들 때까지 시간이 걸려요" +
+                        (if (origin.server != null) " (FTP는 데이터도 써요)." else ".")
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (ask.step == 1) {
+                        rebuildAsk = ask.copy(step = 2)
+                        return@TextButton
+                    }
+                    rebuildAsk = null
+                    thumbs?.rebuild(origin, ask.folders, ask.videos, force = true)
+                    if (ask.fromSelection) {
+                        selecting = false
+                        selected = emptySet()
+                    }
+                    toast("썸네일을 다시 만들어요 — 위쪽에 진행 표시")
+                }) {
+                    Text(
+                        if (ask.step == 1) "다음" else "네, 다시 만들게요",
+                        color = if (ask.step == 2) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    )
+                }
+            },
+            dismissButton = { TextButton(onClick = { rebuildAsk = null }) { Text("취소") } },
         )
     }
 
@@ -757,3 +811,12 @@ fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
         Button(onClick = onRetry) { Text("다시 시도") }
     }
 }
+
+/** 썸네일 여러 개 다시 만들기 확인 창 내용 (step 1 = 첫 확인, 2 = 마지막 확인). */
+private data class RebuildAsk(
+    val description: String,
+    val folders: List<Pair<String, suspend () -> List<FileEntry>>>,
+    val videos: List<FileEntry>,
+    val step: Int,
+    val fromSelection: Boolean,
+)

@@ -18,6 +18,7 @@ data class FileEntry(
         val VIDEO_EXT = setOf(
             "mp4", "m4v", "mkv", "avi", "wmv", "asf", "mov", "ts", "m2ts", "mts",
             "flv", "webm", "mpg", "mpeg", "3gp", "rm", "rmvb", "ogv", "vob", "divx",
+            "mod", "tod", "m2v", "mpe", "f4v", "m4p", "3g2", "k3g", "skm", "xvid",
         )
     }
 }

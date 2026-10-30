@@ -44,6 +44,8 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // VLC와 FFmpeg 추출기가 같은 C++ 기본 라이브러리를 각자 들고 있어 하나만 넣는다
+            pickFirsts += "**/libc++_shared.so"
         }
     }
     buildFeatures {
@@ -65,6 +67,9 @@ dependencies {
     implementation("commons-net:commons-net:3.11.1")
     // 재생 엔진 (VLC) — MKV·AVI·AC3/DTS 음성·SMI/SRT/ASS 자막까지 폭넓게 지원
     implementation("org.videolan.android:libvlc-all:3.7.6")
+    // 썸네일용 FFmpeg 추출기 — AVI·WMV·MPG·VOB·FLV·RMVB 등 안드로이드 기본 추출기가 못 여는 형식
+    implementation("com.github.wseemann:FFmpegMediaMetadataRetriever-core:1.0.23")
+    implementation("com.github.wseemann:FFmpegMediaMetadataRetriever-native-arm64-v8a:1.0.23")
 }
 
 kotlin {
