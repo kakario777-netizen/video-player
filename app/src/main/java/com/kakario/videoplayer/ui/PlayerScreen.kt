@@ -415,7 +415,11 @@ fun PlayerScreen(
     // ── 오프라인 AI 자막 (폰 안에서만 동작)
     val aiStore = remember { SettingsStore(context) }
     val aiModels = remember { ModelManager(context) }
-    val whisperModel = remember { AiModel.entries.firstOrNull { it.name == aiStore.aiWhisperModel } ?: AiModel.WHISPER_TURBO }
+    // 실시간 시청은 빠른 모델(small)이 있으면 그걸로 — 큰 모델은 폰 CPU로 재생 속도를 못 따라감
+    val whisperModel = remember {
+        val chosen = AiModel.entries.firstOrNull { it.name == aiStore.aiWhisperModel } ?: AiModel.WHISPER_TURBO
+        if (aiStore.aiLiveFast && aiModels.isReady(AiModel.WHISPER_SMALL)) AiModel.WHISPER_SMALL else chosen
+    }
     val whisperReady = remember(key) { aiModels.isReady(whisperModel) }
     var aiOn by remember(key) { mutableStateOf(false) }
     var aiShow by remember { mutableStateOf(AiShowMode.entries.firstOrNull { it.name == aiStore.aiShowMode } ?: AiShowMode.BOTH) }
@@ -696,7 +700,11 @@ fun PlayerScreen(
                 ai.notice != null -> ai.notice
                 ai.korean -> null
                 ai.failed != null -> ai.failed
-                notReady && ai.status != null -> ai.status
+                notReady && ai.status != null -> {
+                    // 지금 하는 일과 걸린 시간도 같이 (예: AI 자막 0:30부터 준비 중 · 음성 인식 12초)
+                    val st = ai.stage
+                    if (st != null) "${ai.status} · $st ${((System.currentTimeMillis() - ai.stageSince) / 1000)}초" else ai.status
+                }
                 controlsVisible && ai.progress in 0.001f..0.999f -> "AI 자막 ${(ai.progress * 100).toInt()}%"
                 else -> null
             }

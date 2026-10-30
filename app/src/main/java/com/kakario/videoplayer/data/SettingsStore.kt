@@ -180,6 +180,13 @@ class SettingsStore(context: Context) {
             prefs.edit().putString("ai_show", value).apply()
         }
 
+    /** 재생하면서 실시간으로 볼 때는 빠른 모델(small)을 쓸지 (받아 둔 경우). */
+    var aiLiveFast: Boolean
+        get() = prefs.getBoolean("ai_live_fast", true)
+        set(value) {
+            prefs.edit().putBoolean("ai_live_fast", value).apply()
+        }
+
     /** 폰 성능 기능 더 쓰기 (i8mm 지원 폰이면 고성능 엔진). 기본 켜짐. */
     var aiFastCpu: Boolean
         get() = prefs.getBoolean("ai_fast_cpu", true)

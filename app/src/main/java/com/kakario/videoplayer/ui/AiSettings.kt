@@ -69,6 +69,7 @@ fun AiSubtitleSettings() {
     var mobileAsk by remember { mutableStateOf<AiModel?>(null) }
     var dlError by remember { mutableStateOf<String?>(null) }
     var fastCpu by remember { mutableStateOf(store.aiFastCpu) }
+    var liveFast by remember { mutableStateOf(store.aiLiveFast) }
     // 받기: 와이파이면 바로, 모바일 데이터면 용량 알려주고 물어보기
     fun startDownload(m: AiModel) {
         if (models.onMobileData()) mobileAsk = m else dlError = models.download(m)
@@ -123,6 +124,31 @@ fun AiSubtitleSettings() {
                     onCancel = { models.cancel(m); tick++ },
                     onDelete = { deleteAsk = m },
                 )
+            }
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = liveFast, onValueChange = {
+                        liveFast = it
+                        store.aiLiveFast = it
+                    })
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("볼 때는 빠른 모델(small)로 실시간 자막", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        if (models.isReady(AiModel.WHISPER_SMALL))
+                            "큰 모델은 폰에서 재생 속도를 못 따라가요. 보면서는 small, 미리 만들기는 위에서 고른 모델을 써요"
+                        else
+                            "⚠️ small 모델을 받아야 켜져요 — 큰 모델만으로는 재생 중 자막이 많이 늦어요",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (models.isReady(AiModel.WHISPER_SMALL)) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = liveFast, onCheckedChange = null)
             }
 
             SubHeader("② 한국어 번역")

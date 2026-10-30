@@ -70,6 +70,15 @@ class AiSubtitleSession(
         private set
     /** 화면 상태 안내 (null이면 조용). */
     var status by mutableStateOf<String?>(null)
+    /** 지금 하는 일 (소리 받는 중 / 음성 인식 중 / 번역 중)과 시작 시각 — 화면에 경과 시간 표시. */
+    var stage by mutableStateOf<String?>(null)
+        private set
+    var stageSince by mutableLongStateOf(0L)
+        private set
+    private fun stage(s: String?) {
+        stage = s
+        stageSince = System.currentTimeMillis()
+    }
         private set
     /** 지금 위치부터 끊김 없이 자막이 준비된 지점(ms). */
     var readyUntilMs by mutableLongStateOf(0L)
@@ -89,7 +98,7 @@ class AiSubtitleSession(
         private set
 
     /** 30초 덩어리 하나를 인식·번역하는 데 걸리는 시간(ms, 평균). 처음엔 넉넉히 잡는다. */
-    @Volatile private var procMs = 35_000L
+    @Volatile private var procMs = if (whisperModel.name.contains("small")) 15_000L else 40_000L
 
     private val done: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var durationMs = 0L
@@ -169,13 +178,16 @@ class AiSubtitleSession(
                     val chunkStartedAt = System.currentTimeMillis()
                     status = if (startMs <= ph + 2_000) "AI 자막 만드는 중…"
                     else "AI 자막 ${mmss(startMs)}부터 준비 중"
+                    stage("소리 받는 중")
                     val pcm = chunker.read(startMs, CHUNK_MS)
                     if (pcm == null || rms(pcm) < SILENCE) {
                         done += next
                         saveCache()
                         continue
                     }
+                    stage("음성 인식 중")
                     val raw = WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", threads, false)
+                    stage(null)
                     if (!isActive) return@launch
                     if (raw == null) {
                         done += next
@@ -226,7 +238,8 @@ class AiSubtitleSession(
                         }
                     }
                     val translated = if (llmModel != null && language != null && language != "ko" && segs.isNotEmpty()) {
-                        translate(segs)
+                        stage("번역 중")
+                        translate(segs).also { stage(null) }
                     } else segs
                     if (!isActive) return@launch
                     withContext(Dispatchers.Main) {
