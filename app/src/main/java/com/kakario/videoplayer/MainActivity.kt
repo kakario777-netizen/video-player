@@ -58,6 +58,12 @@ import com.kakario.videoplayer.ui.PlayerPrefs
 import com.kakario.videoplayer.ui.PlayerBridge
 import com.kakario.videoplayer.ui.LocalSort
 import com.kakario.videoplayer.ui.SortState
+import com.kakario.videoplayer.ui.LocalThumbRatio
+import com.kakario.videoplayer.ui.LineIcon
+import com.kakario.videoplayer.ui.LineIcons
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.thumb.LocalVideoThumbs
 import com.kakario.videoplayer.thumb.VideoThumbs
 import com.kakario.videoplayer.data.AutoNext
@@ -117,7 +123,7 @@ data class OpenVideo(
         }
 }
 
-private val TABS = listOf("⭐ 즐겨찾기", "🗄️ FTP", "📱 내 폰")
+private val TABS = listOf("즐겨찾기", "FTP", "내 폰")
 private const val TAB_FAVORITES = 0
 private const val TAB_FTP = 1
 private const val TAB_LOCAL = 2
@@ -152,6 +158,9 @@ class MainActivity : ComponentActivity() {
             var autoNext by remember { mutableStateOf(settingsStore.autoNext) }
             var pip by remember { mutableStateOf(settingsStore.pip) }
             var sortOrder by remember { mutableStateOf(settingsStore.sortOrder) }
+            var foldersFirst by remember { mutableStateOf(settingsStore.foldersFirst) }
+            var thumbRatio by remember { mutableStateOf(settingsStore.thumbRatio) }
+            var lockButton by remember { mutableStateOf(settingsStore.lockButton) }
             // 썸네일 로더에 설정 반영
             thumbs.thumbMs = thumbSeconds * 1000L
             thumbs.skipDark = thumbSkipDark
@@ -177,10 +186,19 @@ class MainActivity : ComponentActivity() {
               CompositionLocalProvider(
                 LocalGridColumns provides gridColumns,
                 LocalVideoThumbs provides thumbs,
-                LocalSort provides SortState(sortOrder) {
-                    sortOrder = it
-                    settingsStore.sortOrder = it
-                },
+                LocalSort provides SortState(
+                    order = sortOrder,
+                    foldersFirst = foldersFirst,
+                    onChange = {
+                        sortOrder = it
+                        settingsStore.sortOrder = it
+                    },
+                    onFoldersFirstChange = {
+                        foldersFirst = it
+                        settingsStore.foldersFirst = it
+                    },
+                ),
+                LocalThumbRatio provides thumbRatio.ratio,
               ) {
                 var settingsOpen by remember { mutableStateOf(false) }
                 val servers = remember { mutableStateListOf<FtpServer>().apply { addAll(serverStore.load()) } }
@@ -322,6 +340,16 @@ class MainActivity : ComponentActivity() {
                                 pipEnabled = it
                                 settingsStore.pip = it
                             },
+                            thumbRatio = thumbRatio,
+                            onThumbRatioChange = {
+                                thumbRatio = it
+                                settingsStore.thumbRatio = it
+                            },
+                            lockButton = lockButton,
+                            onLockButtonChange = {
+                                lockButton = it
+                                settingsStore.lockButton = it
+                            },
                             onClose = { settingsOpen = false },
                         )
                     }
@@ -349,7 +377,20 @@ class MainActivity : ComponentActivity() {
                                     Tab(
                                         selected = tab == i,
                                         onClick = { tab = i },
-                                        text = { Text(label, maxLines = 1) },
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                LineIcon(
+                                                    when (i) {
+                                                        TAB_FAVORITES -> if (tab == i) LineIcons.StarFilled else LineIcons.Star
+                                                        TAB_FTP -> LineIcons.Server
+                                                        else -> LineIcons.Phone
+                                                    },
+                                                    size = 18.dp,
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(label, maxLines = 1)
+                                            }
+                                        },
                                         unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -434,7 +475,7 @@ class MainActivity : ComponentActivity() {
                         origin = video.origin,
                         entry = video.entry,
                         nextEntry = video.next,
-                        prefs = PlayerPrefs(subtitleSize.scale, resumePlayback, skipSeconds, autoNext == AutoNext.COUNTDOWN),
+                        prefs = PlayerPrefs(subtitleSize.scale, resumePlayback, skipSeconds, autoNext == AutoNext.COUNTDOWN, lockButton),
                         inPip = inPip,
                         listFolder = { dir ->
                             when {

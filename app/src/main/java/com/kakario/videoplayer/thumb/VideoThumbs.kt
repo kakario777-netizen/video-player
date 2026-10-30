@@ -38,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap
 val LocalVideoThumbs = staticCompositionLocalOf<VideoThumbs?> { null }
 
 /** 폴더 전체 썸네일 만들기 진행 상황 (null이면 쉬는 중). */
-data class ThumbJobStatus(val folder: String, val done: Int, val total: Int)
+data class ThumbJobStatus(val folder: String, val done: Int, val total: Int, val waiting: Int = 0)
 
 /**
  * 영상 썸네일(기본 30초 지점 장면)을 만들고 기억해두는 곳.
@@ -139,28 +139,82 @@ class VideoThumbs private constructor(context: Context) {
         bump(key)
     }
 
-    /** 폴더 안에서 썸네일이 없는 영상만 차례로 만든다 (한 번에 한 폴더). */
+    /** 썸네일 만들기 작업 하나 (폴더 하나, 또는 고른 영상 묶음). */
+    private class Task(
+        val origin: MediaOrigin,
+        val name: String,
+        val load: suspend () -> List<FileEntry>,
+        /** true면 이미 있는 썸네일도 지우고 다시 만든다. */
+        val force: Boolean,
+    )
+
+    private val queue = ArrayDeque<Task>()
+
+    /** 폴더 안에서 썸네일이 없는 영상만 만든다. */
     fun buildFolder(origin: MediaOrigin, folderName: String, videos: List<FileEntry>): Boolean {
-        if (folderJob?.isActive == true) return false
+        enqueue(listOf(Task(origin, folderName, { videos }, force = false)))
+        return true
+    }
+
+    /**
+     * 여러 폴더·영상의 썸네일을 차례로 (다시) 만든다.
+     * folders: (이름, 그 폴더 영상 목록을 가져오는 함수)
+     */
+    fun rebuild(
+        origin: MediaOrigin,
+        folders: List<Pair<String, suspend () -> List<FileEntry>>>,
+        videos: List<FileEntry>,
+        force: Boolean,
+    ) {
+        val tasks = mutableListOf<Task>()
+        if (videos.isNotEmpty()) tasks += Task(origin, "고른 영상 ${videos.size}개", { videos }, force)
+        folders.forEach { (name, load) -> tasks += Task(origin, name, load, force) }
+        enqueue(tasks)
+    }
+
+    private fun enqueue(tasks: List<Task>) {
+        synchronized(queue) { queue.addAll(tasks) }
+        if (folderJob?.isActive == true) return
         folderJob = scope.launch {
-            val todo = videos.filter { !fileFor(key(origin, it)).exists() }
             try {
-                todo.forEachIndexed { i, v ->
-                    if (!isActive) return@launch
-                    _job.value = ThumbJobStatus(folderName, i, todo.size)
-                    val key = key(origin, v)
-                    if (memory.get(key) == null && !fileFor(key).exists()) {
-                        runCatching { generateLocked(origin, v, key) }
+                while (isActive) {
+                    val task = synchronized(queue) { queue.removeFirstOrNull() } ?: break
+                    val waiting = { synchronized(queue) { queue.size } }
+                    _job.value = ThumbJobStatus(task.name, 0, 0, waiting())
+                    val videos = try {
+                        task.load().filter { it.isVideo }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                    val todo = if (task.force) videos else videos.filter { !fileFor(key(task.origin, it)).exists() }
+                    todo.forEachIndexed { i, v ->
+                        if (!isActive) return@launch
+                        _job.value = ThumbJobStatus(task.name, i, todo.size, waiting())
+                        if (task.force) invalidate(task.origin, v)
+                        val key = key(task.origin, v)
+                        if (memory.get(key) == null && !fileFor(key).exists()) {
+                            runCatching { generateLocked(task.origin, v, key) }
+                        }
                     }
                 }
             } finally {
                 _job.value = null
+                // 끝나는 순간에 새로 들어온 작업이 있으면 이어서 처리
+                if (synchronized(queue) { queue.isNotEmpty() }) {
+                    val me = folderJob
+                    scope.launch {
+                        me?.join()
+                        enqueue(emptyList())
+                    }
+                }
             }
         }
-        return true
     }
 
     fun stopFolder() {
+        synchronized(queue) { queue.clear() }
         folderJob?.cancel()
         _job.value = null
     }

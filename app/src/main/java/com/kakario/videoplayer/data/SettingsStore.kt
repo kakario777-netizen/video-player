@@ -23,6 +23,13 @@ enum class AutoNext(val label: String) {
     COUNTDOWN("5초 뒤 다음 화 자동 재생"),
 }
 
+/** 목록 썸네일 칸 비율. */
+enum class ThumbRatio(val label: String, val ratio: Float) {
+    SQUARE("1:1", 1f),
+    R4_3("4:3", 4f / 3f),
+    R16_9("16:9", 16f / 9f),
+}
+
 /** 목록 정렬. */
 enum class SortOrder(val label: String) {
     NAME("이름순"),
@@ -111,6 +118,28 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean("pip", true)
         set(value) {
             prefs.edit().putBoolean("pip", value).apply()
+        }
+
+    var thumbRatio: ThumbRatio
+        get() = prefs.getString("thumb_ratio", null)
+            ?.let { name -> ThumbRatio.entries.firstOrNull { it.name == name } }
+            ?: ThumbRatio.R16_9
+        set(value) {
+            prefs.edit().putString("thumb_ratio", value.name).apply()
+        }
+
+    /** 목록에서 폴더를 영상보다 위에 둘지 (false면 아래). */
+    var foldersFirst: Boolean
+        get() = prefs.getBoolean("folders_first", true)
+        set(value) {
+            prefs.edit().putBoolean("folders_first", value).apply()
+        }
+
+    /** 재생 화면에 화면 잠금 버튼을 보일지. */
+    var lockButton: Boolean
+        get() = prefs.getBoolean("lock_button", false)
+        set(value) {
+            prefs.edit().putBoolean("lock_button", value).apply()
         }
 
     var sortOrder: SortOrder

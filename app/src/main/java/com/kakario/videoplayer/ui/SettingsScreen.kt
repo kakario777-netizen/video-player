@@ -34,6 +34,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.data.ThemeMode
 import com.kakario.videoplayer.data.AutoNext
+import com.kakario.videoplayer.data.ThumbRatio
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.text.style.TextAlign
 import com.kakario.videoplayer.thumb.LocalVideoThumbs
@@ -71,6 +73,10 @@ fun SettingsScreen(
     onAutoNextChange: (AutoNext) -> Unit,
     pip: Boolean,
     onPipChange: (Boolean) -> Unit,
+    thumbRatio: ThumbRatio,
+    onThumbRatioChange: (ThumbRatio) -> Unit,
+    lockButton: Boolean,
+    onLockButtonChange: (Boolean) -> Unit,
     onClose: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -97,6 +103,46 @@ fun SettingsScreen(
             Divider()
 
             // ── 목록 크기
+            // ── 썸네일 비율
+            SectionTitle("썸네일 비율")
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ThumbRatio.entries.forEach { r ->
+                    val on = r == thumbRatio
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(
+                                if (on) 2.dp else 1.dp,
+                                if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                RoundedCornerShape(10.dp),
+                            )
+                            .selectable(selected = on, onClick = { onThumbRatioChange(r) })
+                            .padding(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            Modifier
+                                .height(40.dp)
+                                .aspectRatio(r.ratio)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant)
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            r.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
+                }
+            }
+
+            Divider()
+
             SectionTitle("목록 썸네일 크기")
             var sliderValue by remember { mutableFloatStateOf(gridColumns.toFloat()) }
             val cols = sliderValue.roundToInt()
@@ -125,7 +171,7 @@ fun SettingsScreen(
                 )
                 Text("작게", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            GridPreview(cols)
+            GridPreview(cols, thumbRatio.ratio)
 
             Divider()
 
@@ -195,6 +241,12 @@ fun SettingsScreen(
                 subtitle = "재생 중에 홈으로 나가면 화면 구석의 작은 창(PIP)에서 이어서 재생돼요",
                 checked = pip,
                 onChange = onPipChange,
+            )
+            SettingSwitch(
+                title = "화면 잠금 버튼 사용",
+                subtitle = "켜면 재생 화면 위쪽에 🔒 버튼이 생겨요. 누르면 화면 터치가 잠겨요",
+                checked = lockButton,
+                onChange = onLockButtonChange,
             )
 
             Divider()
@@ -342,7 +394,7 @@ fun SettingsScreen(
 
 /** 설정한 개수대로 한 줄 미리보기 (16:9). */
 @Composable
-private fun GridPreview(columns: Int) {
+private fun GridPreview(columns: Int, ratio: Float) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -353,7 +405,7 @@ private fun GridPreview(columns: Int) {
             Box(
                 Modifier
                     .weight(1f)
-                    .aspectRatio(16f / 9f)
+                    .aspectRatio(ratio)
                     .clip(RoundedCornerShape(4.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             )

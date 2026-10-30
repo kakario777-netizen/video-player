@@ -72,6 +72,8 @@ internal class VlcThumbnailer(private val context: Context) {
         var player: MediaPlayer? = null
         val frames = mutableListOf<Pair<Long, Bitmap>>()
         var duration = 0L
+        // 길이를 모르는 상태에서의 첫 위치(보통 30초) — 처음부터 그 위치로 열어서 바로 그리게 한다
+        val first = times(0).firstOrNull() ?: 0L
         try {
             // VLC 화면 연결은 메인 스레드에서
             onMain {
@@ -84,6 +86,7 @@ internal class VlcThumbnailer(private val context: Context) {
                 media.setHWDecoderEnabled(false, false) // 그림판에는 소프트웨어 출력이 확실하다
                 media.addOption(":no-audio")
                 media.addOption(":start-paused=false")
+                if (first > 0) media.addOption(":start-time=${first / 1000.0}")
                 mp.media = media
                 media.release()
                 mp.play()
@@ -92,22 +95,38 @@ internal class VlcThumbnailer(private val context: Context) {
             val mp = player ?: return Result(emptyList(), 0)
             val deadline = System.currentTimeMillis() + timeoutMs
 
-            // 재생이 시작되어 길이를 알 때까지 기다림
-            while (System.currentTimeMillis() < deadline && mp.length <= 0 && mp.playerState != IMedia.State.Error) {
-                drain(reader)
-                Thread.sleep(80)
-            }
+            // 1) 시작 위치에서 바로 한 장 (MPG·VOB처럼 길이를 늦게 알려주는 형식도 여기서 잡힌다)
+            waitFrame(reader, mp, first, deadline)?.let { frames += first to it }
             duration = mp.length.coerceAtLeast(0)
-            if (mp.playerState == IMedia.State.Error) return Result(emptyList(), duration)
+            if (mp.playerState == IMedia.State.Error && frames.isEmpty()) return Result(emptyList(), duration)
+            if (frames.isNotEmpty() && good(frames.last().second)) return Result(frames, duration)
 
+            // 2) 어둡거나 못 뽑았으면 다른 후보 위치로 이동 (짧은 영상은 가운데)
             for (t in times(duration)) {
                 if (System.currentTimeMillis() > deadline) break
+                if (frames.isNotEmpty() && kotlin.math.abs(t - first) < 3_000) continue
+                if (mp.playerState == IMedia.State.Ended || mp.playerState == IMedia.State.Stopped) {
+                    // 시작 위치가 영상보다 길어서 끝나버린 경우 → 다시 틀고 이동
+                    mp.stop()
+                    mp.play()
+                    Thread.sleep(200)
+                }
                 drain(reader)
                 mp.time = t
                 val bmp = waitFrame(reader, mp, t, deadline) ?: continue
                 frames += t to bmp
                 if (good(bmp)) break
+                if (duration <= 0) duration = mp.length.coerceAtLeast(0)
             }
+            // 3) 그래도 하나도 없으면 지금 보이는 장면이라도
+            if (frames.isEmpty() && System.currentTimeMillis() < deadline) {
+                if (mp.playerState == IMedia.State.Ended || mp.playerState == IMedia.State.Stopped) {
+                    mp.stop()
+                    mp.play()
+                }
+                waitFrame(reader, mp, 0, deadline)?.let { frames += 0L to it }
+            }
+            if (duration <= 0) duration = mp.length.coerceAtLeast(0)
             return Result(frames, duration)
         } catch (e: FormatMismatch) {
             frames.forEach { it.second.recycle() }
@@ -130,13 +149,17 @@ internal class VlcThumbnailer(private val context: Context) {
     /** 이동한 위치(t) 근처가 재생된 뒤 그려진 장면을 가져온다. 이동 직후 몇 장은 버린다. */
     private fun waitFrame(reader: ImageReader, mp: MediaPlayer, t: Long, deadline: Long): Bitmap? {
         var seen = 0
-        val until = minOf(deadline, System.currentTimeMillis() + 10_000)
+        var total = 0
+        val until = minOf(deadline, System.currentTimeMillis() + 12_000)
         while (System.currentTimeMillis() < until) {
             val img = acquire(reader)
             if (img != null) {
-                val nearTarget = mp.time >= t - 1_000
+                total++
+                // MPG·VOB는 시간 값이 부정확하거나 0으로 나올 수 있어 조건을 느슨하게
+                val now = mp.time
+                val nearTarget = now <= 0 || now >= t - 1_500
                 if (nearTarget) seen++
-                if (nearTarget && seen >= 3) {
+                if ((nearTarget && seen >= 3) || total >= 15) {
                     return img
                 }
                 img.recycle()

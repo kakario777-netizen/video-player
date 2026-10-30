@@ -108,10 +108,7 @@ private fun StorageRootList(onPick: (String) -> Unit) {
                         .padding(horizontal = 16.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        if (root.label == "내장 메모리") "📱" else "💾",
-                        style = MaterialTheme.typography.titleLarge,
-                    )
+                    LineIcon(if (root.label == "내장 메모리") LineIcons.Phone else LineIcons.SdCard, size = 28.dp)
                     Spacer(Modifier.width(14.dp))
                     Column {
                         Text(
@@ -139,7 +136,7 @@ private fun PermissionView(onGrant: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(32.dp),
         ) {
-            Text("📱", style = MaterialTheme.typography.displayMedium)
+            LineIcon(LineIcons.Phone, size = 56.dp)
             Spacer(Modifier.height(12.dp))
             Text(
                 "폰 안의 영상을 보려면 권한이 필요해요",

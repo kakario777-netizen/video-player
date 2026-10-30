@@ -12,6 +12,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -102,6 +103,8 @@ data class PlayerPrefs(
     val skipSeconds: Int,
     /** 끝나면 5초 뒤 다음 화 자동 재생. */
     val autoNext: Boolean,
+    /** 위쪽에 화면 잠금 버튼을 보일지 (설정). */
+    val lockButton: Boolean = false,
 )
 
 /**
@@ -127,10 +130,11 @@ private val ASPECTS = listOf(
     MediaPlayer.ScaleType.SURFACE_4_3 to "4:3",
     MediaPlayer.ScaleType.SURFACE_ORIGINAL to "원본 크기",
 )
+/** 회전 버튼을 누를 때마다 자동 → 가로 → 세로 순. 처음엔 자동(폰을 든 방향 그대로). */
 private val ROTATIONS = listOf(
+    ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR to "자동",
     ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE to "가로",
     ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT to "세로",
-    ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR to "자동",
 )
 
 /**
@@ -647,16 +651,13 @@ fun PlayerScreen(
                     TopChip("음성") { sheet = Sheet.AUDIO; interaction++ }
                     TopChip(speedLabel(speed)) { sheet = Sheet.SPEED; interaction++ }
                     TopChip("화면") { sheet = Sheet.ASPECT; interaction++ }
-                    TopChip(ROTATIONS[rotation].second) {
-                        rotation = (rotation + 1) % ROTATIONS.size
-                        showHint("화면 방향: ${ROTATIONS[rotation].second}")
-                        interaction++
-                    }
-                    TopChip("🔒") {
-                        locked = true
-                        sheet = null
-                        lockHintVisible = true
-                        showHint("화면 잠금 — 탭해서 🔓 누르면 풀려요")
+                    if (prefs.lockButton) {
+                        TopChip("🔒") {
+                            locked = true
+                            sheet = null
+                            lockHintVisible = true
+                            showHint("화면 잠금 — 탭해서 🔓 누르면 풀려요")
+                        }
                     }
                 }
 
@@ -763,16 +764,45 @@ fun PlayerScreen(
                             )
                         }
                     }
-                    SeekBar(
-                        timeMs = timeMs,
-                        lengthMs = lengthMs,
-                        onSeek = { ms ->
-                            player.time = ms
-                            timeMs = ms
-                            interaction++
-                        },
-                        onDragging = { interaction++ },
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 가장 많이 쓰는 회전 버튼: 크게, 왼쪽 아래
+                        Column(
+                            Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    rotation = (rotation + 1) % ROTATIONS.size
+                                    showHint("화면 방향: ${ROTATIONS[rotation].second}")
+                                    interaction++
+                                }
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x66000000))
+                                    .border(1.5.dp, Color(0xAAFFFFFF), CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                LineIcon(LineIcons.Rotate, size = 30.dp, tint = Color.White)
+                            }
+                            Text(ROTATIONS[rotation].second, color = Color.White, fontSize = 11.sp)
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Box(Modifier.weight(1f)) {
+                            SeekBar(
+                                timeMs = timeMs,
+                                lengthMs = lengthMs,
+                                onSeek = { ms ->
+                                    player.time = ms
+                                    timeMs = ms
+                                    interaction++
+                                },
+                                onDragging = { interaction++ },
+                            )
+                        }
+                    }
                 }
             }
         }

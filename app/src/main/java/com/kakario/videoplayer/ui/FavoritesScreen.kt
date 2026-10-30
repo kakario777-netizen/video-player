@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -87,7 +88,8 @@ fun FavoritesScreen(
                             RecentTile(
                                 origin = MediaOrigin(server),
                                 item = r,
-                                source = if (r.serverId == null) "📱 내 폰" else "🗄️ " + (server?.name ?: ""),
+                                source = if (r.serverId == null) "내 폰" else (server?.name ?: ""),
+                                local = r.serverId == null,
                                 onClick = { onPlayRecent(r) },
                                 onLongClick = { removingRecent = r },
                             )
@@ -103,7 +105,7 @@ fun FavoritesScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 16.dp),
                 ) {
-                    Text("⭐", style = MaterialTheme.typography.displayMedium)
+                    LineIcon(LineIcons.Star, size = 56.dp)
                     Spacer(Modifier.height(12.dp))
                     Text(
                         "즐겨찾기한 폴더가 없어요",
@@ -112,7 +114,7 @@ fun FavoritesScreen(
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "FTP나 내 폰 탭에서 폴더 옆 ☆를 누르면\n여기에 모여서 바로 열 수 있어요",
+                        "FTP나 내 폰 탭에서 폴더의 별을 누르면\n여기에 모여서 바로 열 수 있어요",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -123,11 +125,15 @@ fun FavoritesScreen(
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column {
                     if (recent.isNotEmpty()) Spacer(Modifier.height(4.dp))
-                    Text(
-                        "⭐ 즐겨찾기 폴더",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LineIcon(LineIcons.StarFilled, size = 18.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "즐겨찾기 폴더",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
                     Text(
                         "누르면 바로 열리고, 길게 누르면 즐겨찾기에서 뺄 수 있어요",
                         style = MaterialTheme.typography.labelMedium,
@@ -137,10 +143,11 @@ fun FavoritesScreen(
             }
             items(favorites, key = { it.id }) { fav ->
                 val server = servers.firstOrNull { it.id == fav.serverId }
-                val source = if (fav.isLocal) "📱 내 폰" else "🗄️ " + (server?.name ?: "알 수 없는 서버")
+                val source = if (fav.isLocal) "내 폰" else (server?.name ?: "알 수 없는 서버")
                 FavoriteTile(
                     name = fav.name,
                     source = source,
+                    local = fav.isLocal,
                     onClick = { onOpen(fav) },
                     onLongClick = { removing = fav },
                 )
@@ -184,6 +191,7 @@ fun FavoritesScreen(
 private fun FavoriteTile(
     name: String,
     source: String,
+    local: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -200,7 +208,7 @@ private fun FavoriteTile(
                 .background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center,
         ) {
-            Text("📁", style = MaterialTheme.typography.displayMedium)
+            LineIcon(LineIcons.Folder, size = 52.dp)
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -211,14 +219,7 @@ private fun FavoriteTile(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
-        Text(
-            source,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
+        SourceLabel(source, local, Modifier.padding(horizontal = 4.dp))
     }
 }
 
@@ -228,6 +229,7 @@ private fun RecentTile(
     origin: MediaOrigin,
     item: RecentVideo,
     source: String,
+    local: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -244,7 +246,7 @@ private fun RecentTile(
         Box(
             Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f)
+                .aspectRatio(LocalThumbRatio.current)
                 .clip(RoundedCornerShape(8.dp))
         ) {
             ThumbImage(origin, entry, Modifier.fillMaxSize())
@@ -284,13 +286,22 @@ private fun RecentTile(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 2.dp),
         )
+        SourceLabel(source, local, Modifier.padding(horizontal = 2.dp))
+    }
+}
+
+/** "내 폰" / 서버 이름 앞에 선 아이콘. */
+@Composable
+private fun SourceLabel(text: String, local: Boolean, modifier: Modifier) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        LineIcon(if (local) LineIcons.Phone else LineIcons.Server, size = 14.dp)
+        Spacer(Modifier.width(4.dp))
         Text(
-            source,
-            style = MaterialTheme.typography.labelSmall,
+            text,
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 2.dp),
         )
     }
 }
