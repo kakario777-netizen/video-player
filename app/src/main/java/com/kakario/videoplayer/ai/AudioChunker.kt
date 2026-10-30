@@ -9,7 +9,7 @@ import java.nio.ByteOrder
 
 /** 영상에서 16kHz 모노 소리를 원하는 구간만큼 꺼내는 통로. */
 interface AudioSource : Closeable {
-    override val durationMs: Long
+    val durationMs: Long
     fun read(startMs: Long, lenMs: Long): FloatArray?
 
     companion object {
@@ -42,7 +42,7 @@ class AudioChunker(source: String, isUrl: Boolean) : AudioSource {
     private var srcRate = 44100
     private var srcChannels = 2
     private var floatPcm = false
-    val durationMs: Long
+    override val durationMs: Long
 
     /** 지금 디코딩 흐름이 어디까지 왔는지(ms). 다음 read가 여기서 시작하면 되감지 않는다. */
     private var streamPosMs = -1L
