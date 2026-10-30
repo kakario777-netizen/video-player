@@ -466,11 +466,13 @@ class VideoThumbs private constructor(context: Context) {
         return d.joinToString("") { "%02x".format(it) }
     }
 
-    private fun isMobileData(): Boolean {
-        val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return false
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+    private fun isMobileData(): Boolean = try {
+        val cm = appContext.getSystemService(ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
             !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    } catch (_: Exception) {
+        false
     }
 
     private fun closeFtpReaders() {

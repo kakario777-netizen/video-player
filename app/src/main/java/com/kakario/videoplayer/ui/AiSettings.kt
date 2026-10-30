@@ -67,10 +67,11 @@ fun AiSubtitleSettings() {
     }
     var deleteAsk by remember { mutableStateOf<AiModel?>(null) }
     var mobileAsk by remember { mutableStateOf<AiModel?>(null) }
+    var dlError by remember { mutableStateOf<String?>(null) }
     var fastCpu by remember { mutableStateOf(store.aiFastCpu) }
     // 받기: 와이파이면 바로, 모바일 데이터면 용량 알려주고 물어보기
     fun startDownload(m: AiModel) {
-        if (models.onMobileData()) mobileAsk = m else models.download(m)
+        if (models.onMobileData()) mobileAsk = m else dlError = models.download(m)
         tick++
     }
     var clearAsk by remember { mutableIntStateOf(0) }
@@ -238,6 +239,15 @@ fun AiSubtitleSettings() {
         }
     }
 
+    dlError?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { dlError = null },
+            title = { Text("받기 실패") },
+            text = { Text(msg) },
+            confirmButton = { TextButton(onClick = { dlError = null }) { Text("확인") } },
+        )
+    }
+
     mobileAsk?.let { m ->
         AlertDialog(
             onDismissRequest = { mobileAsk = null },
@@ -250,14 +260,14 @@ fun AiSubtitleSettings() {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    models.download(m, allowMobile = true)
+                    dlError = models.download(m, allowMobile = true)
                     mobileAsk = null
                     tick++
                 }) { Text("데이터로 받기") }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    models.download(m, allowMobile = false)
+                    dlError = models.download(m, allowMobile = false)
                     mobileAsk = null
                     tick++
                 }) { Text("와이파이 기다리기") }

@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 와이파이/모바일 데이터 구분 (모델 받기 확인, LTE 썸네일 설정) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 내 폰 탭: 안드로이드 10 이하 -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"

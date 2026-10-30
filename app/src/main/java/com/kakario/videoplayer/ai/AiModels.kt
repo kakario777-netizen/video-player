@@ -63,7 +63,13 @@ class ModelManager(context: Context) {
 
     fun isReady(m: AiModel): Boolean = state(m) == ModelState.Ready
 
-    fun state(m: AiModel): ModelState {
+    fun state(m: AiModel): ModelState = try {
+        stateUnsafe(m)
+    } catch (e: Exception) {
+        ModelState.Failed("상태를 읽지 못했어요: ${e.message ?: e.javaClass.simpleName}")
+    }
+
+    private fun stateUnsafe(m: AiModel): ModelState {
         val id = prefs.getLong(m.name, -1L)
         if (id >= 0) {
             dm.query(DownloadManager.Query().setFilterById(id))?.use { c ->
@@ -99,17 +105,29 @@ class ModelManager(context: Context) {
     }
 
     /** 지금 모바일 데이터(LTE·5G)로 연결돼 있는지 (와이파이가 아니면 true). */
-    fun onMobileData(): Boolean {
-        val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java) ?: return false
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-        return !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
+    fun onMobileData(): Boolean = try {
+        val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
+        val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+        caps != null &&
+            !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
             !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) &&
             caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)
+    } catch (_: Exception) {
+        false
     }
 
     /** allowMobile = 모바일 데이터로도 받기 (사용자가 확인했을 때만). */
-    fun download(m: AiModel, allowMobile: Boolean = false) {
+    /** 받기 시작. 실패하면 이유(한국어)를 돌려준다, 성공하면 null. */
+    fun download(m: AiModel, allowMobile: Boolean = false): String? = try {
+        startDownload(m, allowMobile)
+        null
+    } catch (e: Exception) {
+        "받기를 시작하지 못했어요: ${e.message ?: e.javaClass.simpleName}"
+    }
+
+    private fun startDownload(m: AiModel, allowMobile: Boolean) {
         if (state(m) is ModelState.Downloading) return
+        dir.mkdirs()
         partFile(m).delete()
         val req = DownloadManager.Request(Uri.parse(m.url))
             .setTitle("AI 모델 받는 중: ${m.title}")
@@ -117,14 +135,14 @@ class ModelManager(context: Context) {
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
             .setAllowedOverMetered(allowMobile) // 기본은 와이파이에서만, 확인하면 데이터로도
             .setAllowedOverRoaming(false)
-            .setDestinationUri(Uri.fromFile(partFile(m)))
+            .setDestinationInExternalFilesDir(ctx, null, "models/" + m.fileName + ".part")
         val id = dm.enqueue(req)
         prefs.edit().putLong(m.name, id).apply()
     }
 
     fun cancel(m: AiModel) {
         val id = prefs.getLong(m.name, -1L)
-        if (id >= 0) dm.remove(id)
+        if (id >= 0) runCatching { dm.remove(id) }
         prefs.edit().remove(m.name).apply()
         partFile(m).delete()
     }
