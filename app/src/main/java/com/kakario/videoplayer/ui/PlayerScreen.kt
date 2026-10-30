@@ -100,7 +100,20 @@ data class PlayerPrefs(
     val subtitleScale: Int,
     val resume: Boolean,
     val skipSeconds: Int,
+    /** 끝나면 5초 뒤 다음 화 자동 재생. */
+    val autoNext: Boolean,
 )
+
+/**
+ * 재생 화면 ↔ MainActivity 사이 연락 통로.
+ * 홈 버튼을 눌렀을 때 작은 창(PIP)으로 들어갈지 정하려면 지금 재생 중인지, 영상 비율이 얼마인지 알아야 한다.
+ */
+object PlayerBridge {
+    @Volatile var active: Boolean = false
+    @Volatile var playing: Boolean = false
+    @Volatile var videoWidth: Int = 16
+    @Volatile var videoHeight: Int = 9
+}
 
 private enum class Sheet { SUBTITLE, AUDIO, SPEED, ASPECT }
 private enum class DragMode { SEEK, BRIGHTNESS, VOLUME }
@@ -138,6 +151,8 @@ fun PlayerScreen(
     readFile: suspend (FileEntry) -> ByteArray,
     onOpenNext: (FileEntry) -> Unit,
     onClose: () -> Unit,
+    /** 작은 창(PIP)으로 보는 중이면 버튼을 모두 숨긴다. */
+    inPip: Boolean = false,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -200,6 +215,15 @@ fun PlayerScreen(
     var aspect by remember { mutableIntStateOf(0) }
     var subDelayMs by remember { mutableLongStateOf(0L) }
     var externalSubs by remember { mutableIntStateOf(0) }
+    // 받아둔 자막 파일 (디코더를 바꿔 다시 열 때 다시 붙이기 위해)
+    var subFiles by remember { mutableStateOf<List<File>>(emptyList()) }
+    // 하드웨어 디코딩이 실패하면 소프트웨어로 한 번 더 시도
+    var softwareDecoding by remember { mutableStateOf(false) }
+    var swRetried by remember { mutableStateOf(false) }
+    var autoSwitch by remember { mutableIntStateOf(0) }
+    // 다음 화 자동 재생 카운트다운 (null이면 꺼짐)
+    var countdown by remember { mutableStateOf<Int?>(null) }
+    var autoCancelled by remember { mutableStateOf(false) }
 
     // 화면 가운데 잠깐 뜨는 안내 (건너뛰기·밝기·볼륨 등)
     var hint by remember { mutableStateOf<String?>(null) }
@@ -217,8 +241,22 @@ fun PlayerScreen(
     DisposableEffect(player) {
         player.setEventListener { e ->
             when (e.type) {
-                MediaPlayer.Event.Playing -> { playing = true; buffering = false; ended = false; error = null }
-                MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> playing = false
+                MediaPlayer.Event.Playing -> {
+                    playing = true; buffering = false; ended = false; error = null
+                    PlayerBridge.playing = true
+                }
+                MediaPlayer.Event.Paused, MediaPlayer.Event.Stopped -> {
+                    playing = false
+                    PlayerBridge.playing = false
+                }
+                MediaPlayer.Event.Vout -> {
+                    player.currentVideoTrack?.let { v ->
+                        if (v.width > 0 && v.height > 0) {
+                            PlayerBridge.videoWidth = v.width
+                            PlayerBridge.videoHeight = v.height
+                        }
+                    }
+                }
                 MediaPlayer.Event.Buffering -> buffering = e.buffering < 100f
                 MediaPlayer.Event.TimeChanged -> { timeMs = e.timeChanged; buffering = false }
                 MediaPlayer.Event.LengthChanged -> lengthMs = e.lengthChanged
@@ -231,11 +269,22 @@ fun PlayerScreen(
                 MediaPlayer.Event.EncounteredError -> {
                     playing = false
                     buffering = false
-                    error = "영상을 재생하지 못했어요.\n서버 연결 또는 파일 형식을 확인해 주세요."
+                    PlayerBridge.playing = false
+                    if (!softwareDecoding && !swRetried) {
+                        // 하드웨어 디코더가 못 푸는 영상 → 소프트웨어로 자동 재시도
+                        swRetried = true
+                        softwareDecoding = true
+                        autoSwitch++
+                    } else {
+                        error = "영상을 재생하지 못했어요.\n서버 연결 또는 파일 형식을 확인해 주세요."
+                    }
                 }
             }
         }
+        PlayerBridge.active = true
         onDispose {
+            PlayerBridge.active = false
+            PlayerBridge.playing = false
             player.setEventListener(null)
             player.stop()
             player.detachViews()
@@ -244,50 +293,70 @@ fun PlayerScreen(
         }
     }
 
-    // 앱이 뒤로 가거나 화면이 꺼지면 일시정지
+    // 앱이 뒤로 가거나 화면이 꺼지면 일시정지 (작은 창으로 보는 중이면 계속 재생)
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) {
-        if (player.isPlaying) player.pause()
+        val pip = android.os.Build.VERSION.SDK_INT >= 24 && activity?.isInPictureInPictureMode == true
+        if (!pip && player.isPlaying) player.pause()
         controlsVisible = true
+    }
+    // 작은 창을 닫거나 완전히 내려가면 멈춤
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        if (player.isPlaying) player.pause()
     }
 
     // ── 영상 열기 (다음 화로 바뀌면 다시)
     val key = remember(entry.path, entry.size) { store.keyFor(origin, entry) }
     val currentListFolder by rememberUpdatedState(listFolder)
     val currentReadFile by rememberUpdatedState(readFile)
-    DisposableEffect(key) {
-        val server = origin.server
-        val url = if (server != null) FtpStreamServer.urlFor(server, entry.path, entry.size) else null
-        val media = if (url != null) Media(libVlc, Uri.parse(url)) else Media(libVlc, Uri.fromFile(File(entry.path)))
-        media.setHWDecoderEnabled(true, false)
+    val server = origin.server
+    val streamUrl = remember(key) { if (server != null) FtpStreamServer.urlFor(server, entry.path, entry.size) else null }
 
+    /** 영상을 (다시) 연다. startAtMs 위치부터, 받아둔 자막도 다시 붙인다. */
+    fun openMedia(startAtMs: Long, hw: Boolean) {
+        val media = if (streamUrl != null) Media(libVlc, Uri.parse(streamUrl)) else Media(libVlc, Uri.fromFile(File(entry.path)))
+        media.setHWDecoderEnabled(hw, false)
+        if (startAtMs > 0) media.addOption(":start-time=${startAtMs / 1000.0}")
+        player.media = media
+        media.release()
+        subFiles.forEachIndexed { i, f -> player.addSlave(IMedia.Slave.Type.Subtitle, Uri.fromFile(f), i == 0) }
+        buffering = true
+        error = null
+        player.rate = speed
+        player.play()
+    }
+
+    DisposableEffect(key) {
+        store.addRecent(origin, entry)
         // 이어보기: 끝까지 안 본 영상은 보던 위치부터
         val saved = store.get(key)
         resumedFrom = null
-        if (prefs.resume && saved.started && !saved.finished && saved.positionMs > 5_000) {
-            val startAt = (saved.positionMs - 2_000).coerceAtLeast(0)
-            media.addOption(":start-time=${startAt / 1000.0}")
-            resumedFrom = startAt
-            timeMs = startAt
-        } else {
-            timeMs = 0
-        }
-        player.media = media
-        media.release()
+        subFiles = emptyList()
+        softwareDecoding = false
+        swRetried = false
+        countdown = null
+        autoCancelled = false
+        val startAt = if (prefs.resume && saved.started && !saved.finished && saved.positionMs > 5_000) {
+            (saved.positionMs - 2_000).coerceAtLeast(0).also { resumedFrom = it }
+        } else 0L
+        timeMs = startAt
         lengthMs = saved.lengthMs
-        ended = false; error = null; buffering = true; subDelayMs = 0; externalSubs = 0
-        player.rate = speed
-        player.play()
+        ended = false; subDelayMs = 0; externalSubs = 0
+        openMedia(startAt, hw = true)
 
         // 같은 폴더의 자막을 찾아 받아서 붙인다
         val subJob = scope.launch {
             try {
                 val folder = currentListFolder(parentPath(entry.path))
                 val subs = Subtitles.findFor(entry, folder)
+                val files = mutableListOf<File>()
                 subs.forEachIndexed { i, sub ->
                     val bytes = currentReadFile(sub)
+                    if (bytes.isEmpty()) return@forEachIndexed
                     val file = withContext(Dispatchers.IO) { Subtitles.saveAsUtf8(context.cacheDir, sub, bytes) }
+                    files += file
                     if (player.addSlave(IMedia.Slave.Type.Subtitle, Uri.fromFile(file), i == 0)) externalSubs++
                 }
+                subFiles = files
                 if (externalSubs > 0) showHint("자막 연결됨: ${subs.first().name}")
             } catch (e: CancellationException) {
                 throw e
@@ -301,7 +370,29 @@ fun PlayerScreen(
             // 닫거나 다음 화로 넘어갈 때 위치 저장
             if (lengthMs > 0) store.set(key, if (ended) lengthMs else timeMs, lengthMs)
             store.bump()
-            url?.let { FtpStreamServer.release(it) }
+            streamUrl?.let { FtpStreamServer.release(it) }
+        }
+    }
+
+    // 하드웨어 디코딩 실패 → 소프트웨어로 같은 위치부터 다시
+    LaunchedEffect(autoSwitch) {
+        if (autoSwitch > 0) {
+            showHint("소프트웨어 디코딩으로 다시 시도해요")
+            openMedia(timeMs, hw = false)
+        }
+    }
+
+    // 다 보면 다음 화 카운트다운
+    LaunchedEffect(ended, nextEntry, prefs.autoNext, autoCancelled) {
+        if (ended && nextEntry != null && prefs.autoNext && !autoCancelled) {
+            for (n in 5 downTo 1) {
+                countdown = n
+                delay(1000)
+            }
+            countdown = null
+            onOpenNext(nextEntry)
+        } else {
+            countdown = null
         }
     }
 
@@ -482,11 +573,11 @@ fun PlayerScreen(
                 }
         )
 
-        if (buffering && error == null && !ended) {
+        if (buffering && error == null && !ended && !inPip) {
             CircularProgressIndicator(Modifier.align(Alignment.Center), color = Color.White)
         }
 
-        hint?.let {
+        hint?.takeIf { !inPip }?.let {
             Text(
                 it,
                 color = Color.White,
@@ -522,7 +613,7 @@ fun PlayerScreen(
 
         // ── 조작 버튼들
         AnimatedVisibility(
-            visible = !locked && (controlsVisible || error != null || ended),
+            visible = !inPip && !locked && (controlsVisible || error != null || ended),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize(),
@@ -594,6 +685,24 @@ fun PlayerScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text("다 봤어요", color = Color.White, fontSize = 18.sp)
+                        val cd = countdown
+                        if (cd != null && nextEntry != null) {
+                            Spacer(Modifier.size(6.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${cd}초 뒤 다음 화를 재생해요", color = Color(0xFF8AB8FF), fontSize = 14.sp)
+                                Text(
+                                    "취소",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .padding(start = 8.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { autoCancelled = true }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                )
+                            }
+                        }
                         Spacer(Modifier.size(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedButton(onClick = { togglePlay() }) { Text("처음부터", color = Color.White) }
@@ -764,6 +873,24 @@ fun PlayerScreen(
                                     player.videoScale = scale
                                     sheet = null
                                     showHint(label)
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            SheetTitle("디코딩")
+                            SheetOption("하드웨어 (빠름·배터리 절약)", selected = !softwareDecoding) {
+                                if (softwareDecoding) {
+                                    softwareDecoding = false
+                                    swRetried = true // 자동 전환 다시 하지 않음
+                                    openMedia(timeMs, hw = true)
+                                    sheet = null
+                                }
+                            }
+                            SheetOption("소프트웨어 (화면이 깨지거나 초록색일 때)", selected = softwareDecoding) {
+                                if (!softwareDecoding) {
+                                    swRetried = true
+                                    softwareDecoding = true
+                                    openMedia(timeMs, hw = false)
+                                    sheet = null
                                 }
                             }
                         }

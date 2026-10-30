@@ -35,6 +35,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.data.Favorite
 import com.kakario.videoplayer.data.FtpServer
+import com.kakario.videoplayer.data.PlaybackStore
+import com.kakario.videoplayer.data.RecentVideo
+import com.kakario.videoplayer.model.MediaOrigin
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as rowItems
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 
 @Composable
 fun FavoritesScreen(
@@ -42,45 +50,90 @@ fun FavoritesScreen(
     servers: List<FtpServer>,
     onOpen: (Favorite) -> Unit,
     onRemove: (Favorite) -> Unit,
+    onPlayRecent: (RecentVideo) -> Unit,
 ) {
     var removing by remember { mutableStateOf<Favorite?>(null) }
+    var removingRecent by remember { mutableStateOf<RecentVideo?>(null) }
+    val context = LocalContext.current
+    val playback = remember { PlaybackStore.get(context) }
+    val version = playback.version
+    // 끝까지 안 본 최근 영상만 (서버가 지워진 것은 빼고)
+    val recent = remember(version, servers.size) {
+        playback.recent().filter { r ->
+            (r.serverId == null || servers.any { it.id == r.serverId }) &&
+                !playback.get(playback.keyFor(MediaOrigin(servers.firstOrNull { it.id == r.serverId }), r.toEntry())).finished
+        }.take(15)
+    }
 
-    if (favorites.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(32.dp),
-            ) {
-                Text("⭐", style = MaterialTheme.typography.displayMedium)
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "즐겨찾기한 폴더가 없어요",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "FTP나 내 폰 탭에서 폴더 옆 ☆를 누르면\n여기에 모여서 바로 열 수 있어요",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 110.dp),
+        contentPadding = PaddingValues(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        if (recent.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Text(
+                        "▶ 이어서 보기",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        rowItems(recent, key = { "${it.serverId}|${it.path}" }) { r ->
+                            val server = servers.firstOrNull { it.id == r.serverId }
+                            RecentTile(
+                                origin = MediaOrigin(server),
+                                item = r,
+                                source = if (r.serverId == null) "📱 내 폰" else "🗄️ " + (server?.name ?: ""),
+                                onClick = { onPlayRecent(r) },
+                                onLongClick = { removingRecent = r },
+                            )
+                        }
+                    }
+                }
             }
         }
-    } else {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 110.dp),
-            contentPadding = PaddingValues(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.fillMaxSize(),
-        ) {
+
+        if (favorites.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
-                Text(
-                    "누르면 바로 열리고, 길게 누르면 즐겨찾기에서 뺄 수 있어요",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 16.dp),
+                ) {
+                    Text("⭐", style = MaterialTheme.typography.displayMedium)
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "즐겨찾기한 폴더가 없어요",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "FTP나 내 폰 탭에서 폴더 옆 ☆를 누르면\n여기에 모여서 바로 열 수 있어요",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        } else {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    if (recent.isNotEmpty()) Spacer(Modifier.height(4.dp))
+                    Text(
+                        "⭐ 즐겨찾기 폴더",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        "누르면 바로 열리고, 길게 누르면 즐겨찾기에서 뺄 수 있어요",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             items(favorites, key = { it.id }) { fav ->
                 val server = servers.firstOrNull { it.id == fav.serverId }
@@ -93,6 +146,21 @@ fun FavoritesScreen(
                 )
             }
         }
+    }
+
+    removingRecent?.let { r ->
+        AlertDialog(
+            onDismissRequest = { removingRecent = null },
+            title = { Text("이어서 보기에서 빼기") },
+            text = { Text("'${r.name}'\n목록에서만 빠지고, 본 위치 기록과 파일은 그대로예요.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    playback.removeRecent(r)
+                    removingRecent = null
+                }) { Text("빼기") }
+            },
+            dismissButton = { TextButton(onClick = { removingRecent = null }) { Text("취소") } },
+        )
     }
 
     removing?.let { fav ->
@@ -150,6 +218,79 @@ private fun FavoriteTile(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 4.dp),
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RecentTile(
+    origin: MediaOrigin,
+    item: RecentVideo,
+    source: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val context = LocalContext.current
+    val store = remember { PlaybackStore.get(context) }
+    val entry = remember(item) { item.toEntry() }
+    val p = remember(store.version, item) { store.get(store.keyFor(origin, entry)) }
+    Column(
+        Modifier
+            .width(170.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+        ) {
+            ThumbImage(origin, entry, Modifier.fillMaxSize())
+            if (p.started) {
+                Text(
+                    "${formatTime(p.positionMs)} / ${formatTime(p.lengthMs)}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 5.dp, bottom = 8.dp)
+                        .background(Color(0x99000000), RoundedCornerShape(5.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                )
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .background(Color(0x66000000))
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(p.fraction)
+                            .height(4.dp)
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            item.name,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
+        )
+        Text(
+            source,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp),
         )
     }
 }

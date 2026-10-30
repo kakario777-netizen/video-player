@@ -55,6 +55,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.model.FileEntry
+import com.kakario.videoplayer.data.SortOrder
+import com.kakario.videoplayer.thumb.LocalVideoThumbs
+import androidx.compose.runtime.collectAsState
 import com.kakario.videoplayer.data.PlaybackStore
 import androidx.compose.ui.platform.LocalContext
 import com.kakario.videoplayer.model.MediaOrigin
@@ -96,6 +99,8 @@ fun FolderBrowser(
     var menuFor by remember { mutableStateOf<FileEntry?>(null) }
     var deleteTarget by remember { mutableStateOf<FileEntry?>(null) }
     var deleteStep by remember { mutableIntStateOf(0) }
+    var sortMenu by remember { mutableStateOf(false) }
+    val thumbs = LocalVideoThumbs.current
     val playback = PlaybackStore.get(LocalContext.current)
 
     val currentLoad by rememberUpdatedState(load)
@@ -147,12 +152,39 @@ fun FolderBrowser(
                 } ?: path,
                 onBack = onUp,
                 actions = {
+                    val sort = LocalSort.current
+                    TextButton(onClick = { sortMenu = true }) {
+                        Text(sort.order.label, style = MaterialTheme.typography.labelMedium)
+                    }
                     StarButton(on = isFavorite(path), onClick = { toggle(path) })
                     IconButton(onClick = { reloadKey++ }) {
                         Icon(Icons.Filled.Refresh, contentDescription = "새로고침")
                     }
                 },
             )
+
+            val job = thumbs?.job?.collectAsState()?.value
+            if (job != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(start = 16.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "'${job.folder}' 썸네일 만드는 중 ${job.done}/${job.total}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { thumbs?.stopFolder() }) { Text("중지") }
+                }
+            }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (val s = state) {
@@ -165,7 +197,17 @@ fun FolderBrowser(
                     )
 
                     is LoadState.Loaded -> {
-                        val visible = s.entries.filter { it.isDirectory || it.isVideo }
+                        val sort = LocalSort.current
+                        val visible = remember(s.entries, sort.order) {
+                            val dirs = s.entries.filter { it.isDirectory }
+                            val videos = s.entries.filter { it.isVideo }
+                            val sorted = when (sort.order) {
+                                SortOrder.NAME -> videos
+                                SortOrder.NEWEST -> videos.sortedByDescending { it.modified }
+                                SortOrder.LARGEST -> videos.sortedByDescending { it.size }
+                            }
+                            dirs + sorted
+                        }
                         if (visible.isEmpty()) {
                             Text(
                                 "이 폴더에는 하위 폴더나 영상 파일이 없어요",
@@ -215,12 +257,20 @@ fun FolderBrowser(
                         InfoLine("형식", target.extension.uppercase())
                         InfoLine("위치", if (origin.server != null) "🗄️ ${origin.server.name}" else "📱 내 폰")
                         val watched = remember(target, playback.version) { playback.get(playback.keyFor(origin, target)) }
+                        val dur = remember(target) { thumbs?.let { t -> t.duration(t.key(origin, target)) } ?: 0L }
+                        if (dur > 0) InfoLine("재생 시간", formatTime(dur))
                         if (watched.started) {
                             InfoLine("본 위치", "${formatTime(watched.positionMs)} / ${formatTime(watched.lengthMs)}")
                         }
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                         Spacer(Modifier.height(4.dp))
+                        MenuItem("🖼️  썸네일 다시 만들기") {
+                            menuFor = null
+                            thumbs?.invalidate(origin, target)
+                            scope.launch { thumbs?.load(origin, target, force = true) }
+                            toast("썸네일을 다시 만들어요")
+                        }
                         MenuItem("⏮️  시청 기록 지우기 (처음부터 보기)", enabled = watched.started) {
                             menuFor = null
                             playback.clear(playback.keyFor(origin, target))
@@ -232,6 +282,25 @@ fun FolderBrowser(
                             deleteStep = 1
                         }
                     } else {
+                        MenuItem("🖼️  이 폴더 썸네일 모두 만들기") {
+                            menuFor = null
+                            scope.launch {
+                                val list = try {
+                                    currentLoad(target.path).filter { it.isVideo }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (_: Exception) {
+                                    emptyList()
+                                }
+                                if (list.isEmpty()) {
+                                    toast("'${target.name}'에는 영상이 없어요 (하위 폴더는 따로 해주세요)")
+                                } else if (thumbs?.buildFolder(origin, target.name, list) == true) {
+                                    toast("'${target.name}' 영상 ${list.size}개 썸네일을 만들어요 — 위쪽에 진행 표시")
+                                } else {
+                                    toast("다른 폴더를 만드는 중이에요. 끝나거나 중지한 뒤 다시 해주세요")
+                                }
+                            }
+                        }
                         val fav = isFavorite(target.path)
                         MenuItem(if (fav) "☆  즐겨찾기에서 빼기" else "⭐  즐겨찾기에 추가") {
                             menuFor = null
@@ -242,6 +311,27 @@ fun FolderBrowser(
             },
             confirmButton = {},
             dismissButton = { TextButton(onClick = { menuFor = null }) { Text("닫기") } },
+        )
+    }
+
+    // ── 정렬 선택
+    if (sortMenu) {
+        val sort = LocalSort.current
+        AlertDialog(
+            onDismissRequest = { sortMenu = false },
+            title = { Text("영상 정렬") },
+            text = {
+                Column {
+                    SortOrder.entries.forEach { o ->
+                        MenuItem((if (o == sort.order) "●  " else "○  ") + o.label) {
+                            sort.onChange(o)
+                            sortMenu = false
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { sortMenu = false }) { Text("닫기") } },
         )
     }
 
@@ -325,7 +415,7 @@ private fun MenuItem(
 
 /**
  * 목록의 한 칸 (16:9 가로 화면 비율).
- * 영상: 썸네일 자리(다음 단계에서 30초 지점 장면이 들어감) + 형식·용량 표시.
+ * 영상: 30초 지점 장면 썸네일 + 형식·재생시간 표시 + 본 만큼 막대.
  * 폴더: 📁 아이콘 + 오른쪽 위 즐겨찾기 별.
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -370,18 +460,14 @@ private fun VideoTile(
                     )
                 }
             } else {
-                // 썸네일 자리: 가운데 재생 표시
-                Box(
-                    Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(Badge),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("▶", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                }
+                ThumbImage(origin, entry, Modifier.fillMaxSize())
                 SmallBadge(entry.extension.uppercase(), Modifier.align(Alignment.TopStart))
-                SmallBadge(formatBytes(entry.size), Modifier.align(Alignment.BottomEnd))
+                // 재생 시간을 알면 시간, 모르면 용량
+                val thumbs = LocalVideoThumbs.current
+                val key = remember(origin, entry) { thumbs?.key(origin, entry) }
+                val stamp = key?.let { thumbs?.stamp(it) } ?: 0
+                val duration = remember(key, stamp) { key?.let { thumbs?.duration(it) } ?: 0L }
+                SmallBadge(if (duration > 0) formatTime(duration) else formatBytes(entry.size), Modifier.align(Alignment.BottomEnd))
                 WatchBar(origin, entry, Modifier.align(Alignment.BottomCenter))
             }
         }
@@ -509,6 +595,10 @@ fun StarButton(on: Boolean, onClick: () -> Unit) {
 }
 
 val StarColor = Color(0xFFFFC94D)
+
+/** 목록 정렬 (설정에 저장, 모든 폴더 공통). */
+data class SortState(val order: SortOrder, val onChange: (SortOrder) -> Unit)
+val LocalSort = compositionLocalOf { SortState(SortOrder.NAME) {} }
 
 /** 목록에서 한 줄에 보여줄 영상 개수 (설정에서 바꿈). */
 val LocalGridColumns = compositionLocalOf { 2 }

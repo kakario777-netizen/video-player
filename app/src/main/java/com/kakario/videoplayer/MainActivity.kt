@@ -55,6 +55,22 @@ import com.kakario.videoplayer.ui.LocalGridColumns
 import com.kakario.videoplayer.ui.LocalTab
 import com.kakario.videoplayer.ui.PlayerScreen
 import com.kakario.videoplayer.ui.PlayerPrefs
+import com.kakario.videoplayer.ui.PlayerBridge
+import com.kakario.videoplayer.ui.LocalSort
+import com.kakario.videoplayer.ui.SortState
+import com.kakario.videoplayer.thumb.LocalVideoThumbs
+import com.kakario.videoplayer.thumb.VideoThumbs
+import com.kakario.videoplayer.data.AutoNext
+import com.kakario.videoplayer.data.PlaybackStore
+import com.kakario.videoplayer.data.RecentVideo
+import com.kakario.videoplayer.model.parentPath
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.os.Build
+import android.util.Rational
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.CancellationException
 import com.kakario.videoplayer.local.LocalStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -107,6 +123,10 @@ private const val TAB_FTP = 1
 private const val TAB_LOCAL = 2
 
 class MainActivity : ComponentActivity() {
+    /** 작은 창(PIP)으로 보는 중인지 — 재생 화면이 버튼을 숨기는 데 쓴다. */
+    private var inPip by mutableStateOf(false)
+    /** 설정의 '홈 버튼 누르면 작은 창으로 계속 보기'. */
+    @Volatile private var pipEnabled = true
 
     @OptIn(DelicateCoroutinesApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -115,6 +135,9 @@ class MainActivity : ComponentActivity() {
         val serverStore = ServerStore(applicationContext)
         val favoriteStore = FavoriteStore(applicationContext)
         val settingsStore = SettingsStore(applicationContext)
+        val thumbs = VideoThumbs.get(applicationContext)
+        val playback = PlaybackStore.get(applicationContext)
+        pipEnabled = settingsStore.pip
 
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
@@ -122,6 +145,16 @@ class MainActivity : ComponentActivity() {
             var subtitleSize by remember { mutableStateOf(settingsStore.subtitleSize) }
             var resumePlayback by remember { mutableStateOf(settingsStore.resumePlayback) }
             var skipSeconds by remember { mutableIntStateOf(settingsStore.skipSeconds) }
+            var thumbTime by remember { mutableStateOf(settingsStore.thumbTime) }
+            var ftpThumbs by remember { mutableStateOf(settingsStore.ftpThumbs) }
+            var thumbsOnMobile by remember { mutableStateOf(settingsStore.thumbsOnMobile) }
+            var autoNext by remember { mutableStateOf(settingsStore.autoNext) }
+            var pip by remember { mutableStateOf(settingsStore.pip) }
+            var sortOrder by remember { mutableStateOf(settingsStore.sortOrder) }
+            // 썸네일 로더에 설정 반영
+            thumbs.thumbTime = thumbTime
+            thumbs.ftpEnabled = ftpThumbs
+            thumbs.onMobileData = thumbsOnMobile
             val dark = when (themeMode) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -139,7 +172,14 @@ class MainActivity : ComponentActivity() {
             }
 
             MaterialTheme(colorScheme = if (dark) DarkColors else LightColors) {
-              CompositionLocalProvider(LocalGridColumns provides gridColumns) {
+              CompositionLocalProvider(
+                LocalGridColumns provides gridColumns,
+                LocalVideoThumbs provides thumbs,
+                LocalSort provides SortState(sortOrder) {
+                    sortOrder = it
+                    settingsStore.sortOrder = it
+                },
+              ) {
                 var settingsOpen by remember { mutableStateOf(false) }
                 val servers = remember { mutableStateListOf<FtpServer>().apply { addAll(serverStore.load()) } }
                 val favorites = remember { mutableStateListOf<Favorite>().apply { addAll(favoriteStore.load()) } }
@@ -175,6 +215,46 @@ class MainActivity : ComponentActivity() {
                 fun openVideo(video: OpenVideo) {
                     playing = video
                 }
+                // 영상을 보는 동안엔 썸네일 만들기를 멈춰 재생 쪽에 속도를 양보
+                LaunchedEffect(playing != null) { thumbs.paused.value = playing != null }
+
+                // '이어서 보기'에서 연 영상은 같은 폴더 목록을 뒤늦게 받아 다음 화를 찾는다
+                LaunchedEffect(playing?.entry?.path, ftpBrowser) {
+                    val v = playing ?: return@LaunchedEffect
+                    if (v.siblings.size > 1) return@LaunchedEffect
+                    val server = v.origin.server
+                    val list = try {
+                        val dir = parentPath(v.entry.path)
+                        when {
+                            server == null -> LocalStorage.list(dir)
+                            ftpBrowser != null && openServer?.id == server.id -> ftpBrowser.list(dir)
+                            else -> return@LaunchedEffect
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        return@LaunchedEffect
+                    }
+                    val videos = list.filter { it.isVideo }
+                    val now = playing
+                    if (now != null && now.entry.path == v.entry.path && videos.any { it.path == v.entry.path }) {
+                        playing = now.copy(siblings = videos)
+                    }
+                }
+
+                fun playRecent(r: RecentVideo) {
+                    val entry = r.toEntry()
+                    if (r.serverId == null) {
+                        openVideo(OpenVideo(MediaOrigin(null), entry, listOf(entry)))
+                        return
+                    }
+                    val server = servers.firstOrNull { it.id == r.serverId } ?: return
+                    // 그 서버 연결이 없으면 FTP 탭을 영상 폴더로 열어둔다 (자막·다음 화 찾기용)
+                    if (openServer?.id != server.id) {
+                        ftpLocation = FtpLocation(server, parentPath(r.path), null)
+                    }
+                    openVideo(OpenVideo(MediaOrigin(server), entry, listOf(entry)))
+                }
 
                 if (settingsOpen) {
                     Box(
@@ -208,6 +288,32 @@ class MainActivity : ComponentActivity() {
                             onSkipSecondsChange = {
                                 skipSeconds = it
                                 settingsStore.skipSeconds = it
+                            },
+                            thumbTime = thumbTime,
+                            onThumbTimeChange = {
+                                thumbTime = it
+                                settingsStore.thumbTime = it
+                            },
+                            ftpThumbs = ftpThumbs,
+                            onFtpThumbsChange = {
+                                ftpThumbs = it
+                                settingsStore.ftpThumbs = it
+                            },
+                            thumbsOnMobile = thumbsOnMobile,
+                            onThumbsOnMobileChange = {
+                                thumbsOnMobile = it
+                                settingsStore.thumbsOnMobile = it
+                            },
+                            autoNext = autoNext,
+                            onAutoNextChange = {
+                                autoNext = it
+                                settingsStore.autoNext = it
+                            },
+                            pip = pip,
+                            onPipChange = {
+                                pip = it
+                                pipEnabled = it
+                                settingsStore.pip = it
                             },
                             onClose = { settingsOpen = false },
                         )
@@ -274,6 +380,7 @@ class MainActivity : ComponentActivity() {
                                     favorites.removeAll { it.id == fav.id }
                                     favoriteStore.save(favorites)
                                 },
+                                onPlayRecent = { playRecent(it) },
                             )
 
                             TAB_FTP -> FtpTab(
@@ -295,6 +402,7 @@ class MainActivity : ComponentActivity() {
                                     if (favorites.removeAll { it.serverId == server.id }) {
                                         favoriteStore.save(favorites)
                                     }
+                                    playback.removeServer(server.id)
                                 },
                                 isFavorite = { id, path -> isFavorite(id, path) },
                                 onToggleFavorite = { id, path -> toggleFavorite(id, path) },
@@ -319,7 +427,8 @@ class MainActivity : ComponentActivity() {
                         origin = video.origin,
                         entry = video.entry,
                         nextEntry = video.next,
-                        prefs = PlayerPrefs(subtitleSize.scale, resumePlayback, skipSeconds),
+                        prefs = PlayerPrefs(subtitleSize.scale, resumePlayback, skipSeconds, autoNext == AutoNext.COUNTDOWN),
+                        inPip = inPip,
                         listFolder = { dir ->
                             when {
                                 server == null -> LocalStorage.list(dir)
@@ -343,5 +452,26 @@ class MainActivity : ComponentActivity() {
               }
             }
         }
+    }
+
+    /** 영상 재생 중 홈 버튼 → 작은 창(PIP)으로 계속 재생. */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (!pipEnabled || !PlayerBridge.active || !PlayerBridge.playing) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        // 너무 길쭉한 비율은 안드로이드가 거부하므로 범위 안으로
+        val w = PlayerBridge.videoWidth.coerceAtLeast(1)
+        val h = PlayerBridge.videoHeight.coerceAtLeast(1)
+        val ratio = (w.toFloat() / h).coerceIn(0.42f, 2.38f)
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational((ratio * 1000).toInt(), 1000))
+            .build()
+        runCatching { enterPictureInPictureMode(params) }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPip = isInPictureInPictureMode
     }
 }
