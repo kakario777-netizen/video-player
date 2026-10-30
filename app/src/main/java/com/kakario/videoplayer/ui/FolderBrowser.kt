@@ -106,7 +106,8 @@ fun FolderBrowser(
     var selecting by remember(path) { mutableStateOf(false) }
     var selected by remember(path) { mutableStateOf<Set<String>>(emptySet()) }
     val thumbs = LocalVideoThumbs.current
-    val playback = PlaybackStore.get(LocalContext.current)
+    val context = LocalContext.current
+    val playback = PlaybackStore.get(context)
 
     val currentLoad by rememberUpdatedState(load)
     val currentDelete by rememberUpdatedState(delete)
@@ -263,6 +264,7 @@ fun FolderBrowser(
                             ) {
                                 items(visible, key = { it.path }) { entry ->
                                     VideoTile(
+                                        subtitleTag = if (entry.isVideo) subtitleTag(context, origin, entry, s.entries, playback.version) else null,
                                         origin = origin,
                                         entry = entry,
                                         favorite = entry.isDirectory && isFavorite(entry.path),
@@ -596,6 +598,8 @@ private fun MenuItem(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun VideoTile(
+    /** 이름 뒤에 파란 글씨로 붙는 (자막) / (AI자막) 표시. */
+    subtitleTag: String? = null,
     origin: MediaOrigin,
     entry: FileEntry,
     favorite: Boolean,
@@ -662,8 +666,16 @@ private fun VideoTile(
             }
         }
         Spacer(Modifier.height(6.dp))
+        val blue = LineBlue
         Text(
-            entry.name,
+            if (subtitleTag == null) androidx.compose.ui.text.AnnotatedString(entry.name)
+            else androidx.compose.ui.text.buildAnnotatedString {
+                append(entry.name)
+                append(" ")
+                pushStyle(androidx.compose.ui.text.SpanStyle(color = blue, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold))
+                append(subtitleTag)
+                pop()
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 2,
@@ -820,3 +832,33 @@ private data class RebuildAsk(
     val step: Int,
     val fromSelection: Boolean,
 )
+
+/**
+ * 영상에 붙은 자막 표시 글씨.
+ * - 같은 폴더에 자막 파일(.smi .srt …)이 있으면 "(자막)"
+ * - 앱이 만든 AI 자막(.ai.srt 파일 또는 앱 안에 만들어 둔 것)이 있으면 "(AI자막)"
+ */
+@Composable
+private fun subtitleTag(
+    context: android.content.Context,
+    origin: MediaOrigin,
+    entry: FileEntry,
+    folder: List<FileEntry>,
+    version: Int,
+): String? = remember(entry.path, folder, version) {
+    val subs = com.kakario.videoplayer.model.Subtitles.findFor(entry, folder)
+        .filter { it.name.substringBeforeLast('.').lowercase().startsWith(entry.name.substringBeforeLast('.').lowercase()) }
+    val hasAiFile = subs.any { it.name.lowercase().contains(".ai.") }
+    val hasNormal = subs.any { !it.name.lowercase().contains(".ai.") }
+    val key = PlaybackStore.get(context).keyFor(origin, entry)
+    val hasAiCache = java.io.File(
+        java.io.File(context.filesDir, "aisubs"),
+        com.kakario.videoplayer.ai.AiSubtitleSession.sha1(key) + ".json",
+    ).exists()
+    when {
+        hasNormal && (hasAiFile || hasAiCache) -> "(자막)(AI자막)"
+        hasNormal -> "(자막)"
+        hasAiFile || hasAiCache -> "(AI자막)"
+        else -> null
+    }
+}
