@@ -12,7 +12,6 @@ import android.util.LruCache
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.kakario.videoplayer.data.FtpServer
-import com.kakario.videoplayer.data.ThumbTime
 import com.kakario.videoplayer.ftp.FtpRangeReader
 import com.kakario.videoplayer.model.FileEntry
 import com.kakario.videoplayer.model.MediaOrigin
@@ -78,7 +77,10 @@ class VideoThumbs private constructor(context: Context) {
     /** 재생 중이면 true — 새 추출을 시작하지 않고 기다린다. */
     val paused = MutableStateFlow(false)
 
-    @Volatile var thumbTime: ThumbTime = ThumbTime.S30
+    /** 썸네일 장면 위치(ms). */
+    @Volatile var thumbMs: Long = 30_000
+    /** 어두우면 뒤 장면을 더 찾아볼지. */
+    @Volatile var skipDark: Boolean = true
     @Volatile var ftpEnabled: Boolean = true
     @Volatile var onMobileData: Boolean = true
 
@@ -305,12 +307,15 @@ class VideoThumbs private constructor(context: Context) {
         return best
     }
 
-    /** 설정한 시점(기본 30초) → 15초 뒤 → 45초 뒤 → 영상 1/4 지점 순으로 후보. */
+    /**
+     * 설정한 위치(0~2분, 기본 30초)를 먼저.
+     * '어두우면 뒤 장면 찾기'가 켜져 있으면 15초 뒤 → 45초 뒤 → 영상 1/4 지점도 후보로.
+     */
     private fun candidateTimes(duration: Long): List<Long> {
-        val t = thumbTime
-        var base = if (t.percent > 0 && duration > 0) duration * t.percent / 100 else t.ms
-        // 짧은 영상은 가운데 장면
+        var base = thumbMs
+        // 설정 위치보다 짧은 영상은 가운데 장면
         if (duration > 0 && base >= duration * 0.9) base = duration / 2
+        if (!skipDark) return listOf(base)
         return buildList {
             add(base)
             add(base + 15_000)

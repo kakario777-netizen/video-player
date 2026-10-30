@@ -33,8 +33,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.data.ThemeMode
-import com.kakario.videoplayer.data.ThumbTime
 import com.kakario.videoplayer.data.AutoNext
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.style.TextAlign
 import com.kakario.videoplayer.thumb.LocalVideoThumbs
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedButton
@@ -58,8 +59,10 @@ fun SettingsScreen(
     onResumeChange: (Boolean) -> Unit,
     skipSeconds: Int,
     onSkipSecondsChange: (Int) -> Unit,
-    thumbTime: ThumbTime,
-    onThumbTimeChange: (ThumbTime) -> Unit,
+    thumbSeconds: Int,
+    onThumbSecondsChange: (Int) -> Unit,
+    thumbSkipDark: Boolean,
+    onThumbSkipDarkChange: (Boolean) -> Unit,
     ftpThumbs: Boolean,
     onFtpThumbsChange: (Boolean) -> Unit,
     thumbsOnMobile: Boolean,
@@ -198,20 +201,75 @@ fun SettingsScreen(
 
             // ── 썸네일
             SectionTitle("썸네일")
-            Text(
-                "썸네일로 쓸 장면",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-            )
-            ThumbTime.entries.forEach { t ->
-                RadioRow(t.label, selected = t == thumbTime) { onThumbTimeChange(t) }
+            val thumbs = LocalVideoThumbs.current
+            var cacheBytes by remember { mutableLongStateOf(thumbs?.diskBytes() ?: 0L) }
+            var confirmClear by remember { mutableIntStateOf(0) }
+
+            // 썸네일 장면 위치: 처음 ~ 2분, 10초 단위
+            var thumbSlider by remember { mutableFloatStateOf(thumbSeconds / 10f) }
+            val sliderSec = thumbSlider.roundToInt() * 10
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "썸네일로 쓸 장면 위치",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    secondsLabel(sliderSec),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Row(
+                Modifier.padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StepButton("−") {
+                    val v = (thumbSlider.roundToInt() - 1).coerceAtLeast(0)
+                    thumbSlider = v.toFloat()
+                    onThumbSecondsChange(v * 10)
+                }
+                Slider(
+                    value = thumbSlider,
+                    onValueChange = { thumbSlider = it },
+                    onValueChangeFinished = { onThumbSecondsChange(thumbSlider.roundToInt() * 10) },
+                    valueRange = 0f..12f,
+                    steps = 11, // 0, 10, 20 … 120초
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                )
+                StepButton("+") {
+                    val v = (thumbSlider.roundToInt() + 1).coerceAtMost(12)
+                    thumbSlider = v.toFloat()
+                    onThumbSecondsChange(v * 10)
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 32.dp)) {
+                Text("처음", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                Text("1분", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                Text("2분", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
             }
             Text(
-                "장면이 너무 어두우면 자동으로 조금 뒤 장면을 골라요. 바꾼 시점은 새로 만드는 썸네일부터 적용돼요 (기존 것은 길게 눌러 '다시 만들기')",
+                "10초 단위로 정할 수 있어요. 이보다 짧은 영상은 가운데 장면을 써요. 바꾼 위치는 새로 만드는 썸네일부터 적용돼요",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+            TextButton(
+                onClick = { confirmClear = 1 },
+                enabled = cacheBytes > 0,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            ) { Text("기존 썸네일도 이 위치로 모두 다시 만들기") }
+            SettingSwitch(
+                title = "어두운 장면이면 조금 뒤 장면 찾기",
+                subtitle = "페이드·검은 화면이면 15초, 45초 뒤 장면을 자동으로 골라요. 끄면 정한 위치 그대로",
+                checked = thumbSkipDark,
+                onChange = onThumbSkipDarkChange,
             )
             SettingSwitch(
                 title = "FTP 영상도 썸네일 자동으로 만들기",
@@ -226,9 +284,6 @@ fun SettingsScreen(
                 onChange = onThumbsOnMobileChange,
                 enabled = ftpThumbs,
             )
-            val thumbs = LocalVideoThumbs.current
-            var cacheBytes by remember { mutableLongStateOf(thumbs?.diskBytes() ?: 0L) }
-            var confirmClear by remember { mutableIntStateOf(0) }
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -334,6 +389,22 @@ private fun SectionTitle(text: String) {
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 4.dp),
     )
+}
+
+private fun secondsLabel(sec: Int): String = when {
+    sec == 0 -> "처음 (0초)"
+    sec < 60 -> "${sec}초"
+    sec % 60 == 0 -> "${sec / 60}분"
+    else -> "${sec / 60}분 ${sec % 60}초"
+}
+
+@Composable
+private fun StepButton(label: String, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+        modifier = Modifier.size(40.dp),
+    ) { Text(label, style = MaterialTheme.typography.titleMedium) }
 }
 
 @Composable

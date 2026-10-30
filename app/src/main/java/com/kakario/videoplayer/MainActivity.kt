@@ -145,14 +145,16 @@ class MainActivity : ComponentActivity() {
             var subtitleSize by remember { mutableStateOf(settingsStore.subtitleSize) }
             var resumePlayback by remember { mutableStateOf(settingsStore.resumePlayback) }
             var skipSeconds by remember { mutableIntStateOf(settingsStore.skipSeconds) }
-            var thumbTime by remember { mutableStateOf(settingsStore.thumbTime) }
+            var thumbSeconds by remember { mutableIntStateOf(settingsStore.thumbSeconds) }
+            var thumbSkipDark by remember { mutableStateOf(settingsStore.thumbSkipDark) }
             var ftpThumbs by remember { mutableStateOf(settingsStore.ftpThumbs) }
             var thumbsOnMobile by remember { mutableStateOf(settingsStore.thumbsOnMobile) }
             var autoNext by remember { mutableStateOf(settingsStore.autoNext) }
             var pip by remember { mutableStateOf(settingsStore.pip) }
             var sortOrder by remember { mutableStateOf(settingsStore.sortOrder) }
             // 썸네일 로더에 설정 반영
-            thumbs.thumbTime = thumbTime
+            thumbs.thumbMs = thumbSeconds * 1000L
+            thumbs.skipDark = thumbSkipDark
             thumbs.ftpEnabled = ftpThumbs
             thumbs.onMobileData = thumbsOnMobile
             val dark = when (themeMode) {
@@ -289,10 +291,15 @@ class MainActivity : ComponentActivity() {
                                 skipSeconds = it
                                 settingsStore.skipSeconds = it
                             },
-                            thumbTime = thumbTime,
-                            onThumbTimeChange = {
-                                thumbTime = it
-                                settingsStore.thumbTime = it
+                            thumbSeconds = thumbSeconds,
+                            onThumbSecondsChange = {
+                                thumbSeconds = it
+                                settingsStore.thumbSeconds = it
+                            },
+                            thumbSkipDark = thumbSkipDark,
+                            onThumbSkipDarkChange = {
+                                thumbSkipDark = it
+                                settingsStore.thumbSkipDark = it
                             },
                             ftpThumbs = ftpThumbs,
                             onFtpThumbsChange = {

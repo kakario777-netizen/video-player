@@ -17,15 +17,6 @@ enum class SubtitleSize(val label: String, val scale: Int) {
     XLARGE("아주 크게", 165),
 }
 
-/** 썸네일로 쓸 장면 위치. 첫 장면은 검거나 비슷한 경우가 많아 기본은 30초. */
-enum class ThumbTime(val label: String, val ms: Long, val percent: Int = 0) {
-    S10("10초", 10_000),
-    S30("30초 (기본)", 30_000),
-    M1("1분", 60_000),
-    M3("3분", 180_000),
-    P10("영상 길이의 10%", 0, 10),
-}
-
 /** 영상이 끝났을 때. */
 enum class AutoNext(val label: String) {
     OFF("멈추기"),
@@ -79,12 +70,18 @@ class SettingsStore(context: Context) {
             prefs.edit().putInt("skip_seconds", value).apply()
         }
 
-    var thumbTime: ThumbTime
-        get() = prefs.getString("thumb_time", null)
-            ?.let { name -> ThumbTime.entries.firstOrNull { it.name == name } }
-            ?: ThumbTime.S30
+    /** 썸네일로 쓸 장면 위치(초): 0~120초, 10초 단위. 첫 장면은 검거나 비슷한 경우가 많아 기본 30초. */
+    var thumbSeconds: Int
+        get() = (prefs.getInt("thumb_seconds", 30) / 10 * 10).coerceIn(0, 120)
         set(value) {
-            prefs.edit().putString("thumb_time", value.name).apply()
+            prefs.edit().putInt("thumb_seconds", (value / 10 * 10).coerceIn(0, 120)).apply()
+        }
+
+    /** 고른 장면이 너무 어두우면 자동으로 조금 뒤 장면을 찾을지. */
+    var thumbSkipDark: Boolean
+        get() = prefs.getBoolean("thumb_skip_dark", true)
+        set(value) {
+            prefs.edit().putBoolean("thumb_skip_dark", value).apply()
         }
 
     /** FTP 영상도 썸네일을 자동으로 만들지. */
