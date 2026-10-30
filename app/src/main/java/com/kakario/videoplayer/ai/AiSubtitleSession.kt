@@ -88,6 +88,9 @@ class AiSubtitleSession(
     var failed by mutableStateOf<String?>(null)
         private set
 
+    /** 30초 덩어리 하나를 인식·번역하는 데 걸리는 시간(ms, 평균). 처음엔 넉넉히 잡는다. */
+    @Volatile private var procMs = 35_000L
+
     private val done: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var durationMs = 0L
     private var job: Job? = null
@@ -137,8 +140,12 @@ class AiSubtitleSession(
                     updateReady(ph)
                     val first = (ph / CHUNK_MS).toInt()
                     val last = if (durationMs > 0) ((durationMs - 1) / CHUNK_MS).toInt() else first + LOOKAHEAD
-                    // 지금 보는 위치부터 끝까지 먼저, 그다음 앞쪽 빈 곳 (영상 전체를 다 만든다)
-                    val next = (first..last).firstOrNull { it !in done }
+                    // 지금 보는 위치부터 끝까지 먼저, 그다음 앞쪽 빈 곳 (영상 전체를 다 만든다).
+                    // 한 덩어리 처리에 걸리는 시간만큼 앞을 내다봐서, 결과가 나왔을 때 아직 안 지나간 구간을 고른다
+                    // (처리가 재생보다 느려도 자막이 화면에 제때 뜨도록).
+                    val readyAt = if (batch) 0L else ph + procMs + 1_500
+                    val next = (first..last).firstOrNull { it !in done && (it + 1) * CHUNK_MS > readyAt }
+                        ?: (first..last).firstOrNull { it !in done }
                         ?: (0 until minOf(first, last + 1)).firstOrNull { it !in done }
                     if (next == null) {
                         status = null
@@ -159,7 +166,9 @@ class AiSubtitleSession(
                         continue
                     }
                     val startMs = next * CHUNK_MS
-                    status = if (startMs <= ph + 2_000) "AI 자막 만드는 중…" else null
+                    val chunkStartedAt = System.currentTimeMillis()
+                    status = if (startMs <= ph + 2_000) "AI 자막 만드는 중…"
+                    else "AI 자막 ${mmss(startMs)}부터 준비 중"
                     val pcm = chunker.read(startMs, CHUNK_MS)
                     if (pcm == null || rms(pcm) < SILENCE) {
                         done += next
@@ -209,6 +218,13 @@ class AiSubtitleSession(
                         done += next
                         continue
                     }
+                    // 인식 결과(원어)를 먼저 바로 띄우고, 번역은 끝나는 대로 바꿔 끼운다
+                    if (segs.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            cues = (cues.filter { it.startMs < startMs || it.startMs >= startMs + CHUNK_MS } + segs)
+                                .sortedBy { it.startMs }
+                        }
+                    }
                     val translated = if (llmModel != null && language != null && language != "ko" && segs.isNotEmpty()) {
                         translate(segs)
                     } else segs
@@ -218,6 +234,9 @@ class AiSubtitleSession(
                             .sortedBy { it.startMs }
                     }
                     done += next
+                    // 한 덩어리 처리 시간(평균) 갱신 — 다음에 얼마나 앞을 고를지 정하는 데 씀
+                    val took = System.currentTimeMillis() - chunkStartedAt
+                    procMs = (procMs * 0.6 + took * 0.4).toLong().coerceIn(5_000, 180_000)
                     updateReady(playhead())
                     saveCache()
                 }
@@ -313,6 +332,12 @@ class AiSubtitleSession(
     }
 
     // ───────────────────────────── 기타
+
+    private fun mmss(ms: Long): String {
+        val t = ms / 1000
+        return if (t >= 3600) String.format("%d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60)
+        else String.format("%d:%02d", t / 60, t % 60)
+    }
 
     private fun updateReady(ph: Long) {
         var idx = (ph / CHUNK_MS).toInt()
