@@ -76,6 +76,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.util.Rational
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.CancellationException
 import com.kakario.videoplayer.local.LocalStorage
 import kotlinx.coroutines.Dispatchers
@@ -238,7 +239,16 @@ class MainActivity : ComponentActivity() {
                     playing = video
                 }
                 // 영상을 보는 동안엔 썸네일 만들기를 멈춰 재생 쪽에 속도를 양보
-                LaunchedEffect(playing != null) { thumbs.paused.value = playing != null }
+                LaunchedEffect(playing != null) {
+                    thumbs.paused.value = playing != null
+                    // AI 자막 미리 만들기도 영상 보는 동안엔 잠시 멈춤
+                    com.kakario.videoplayer.ai.AiBatch.paused.value = playing != null
+                }
+                // 미리 만들기가 시작되면 알림 권한을 (처음 한 번) 물어본다
+                val aiBatch by com.kakario.videoplayer.ai.AiBatch.status.collectAsState()
+                LaunchedEffect(aiBatch != null) {
+                    if (aiBatch != null) askNotificationPermissionOnce()
+                }
 
                 // '이어서 보기'에서 연 영상은 같은 폴더 목록을 뒤늦게 받아 다음 화를 찾는다
                 LaunchedEffect(playing?.entry?.path, ftpBrowser) {
@@ -509,6 +519,16 @@ class MainActivity : ComponentActivity() {
               }
             }
         }
+    }
+
+    /** 안드로이드 13+: 진행 알림을 보여주려면 알림 권한이 필요 (처음 한 번만 물어봄). */
+    private fun askNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        if (prefs.getBoolean("asked_notification", false)) return
+        prefs.edit().putBoolean("asked_notification", true).apply()
+        requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
     }
 
     /** 영상 재생 중 홈 버튼 → 작은 창(PIP)으로 계속 재생. */

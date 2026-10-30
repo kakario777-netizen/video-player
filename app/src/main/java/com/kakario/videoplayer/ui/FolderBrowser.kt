@@ -56,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.model.FileEntry
 import com.kakario.videoplayer.data.SortOrder
+import com.kakario.videoplayer.ai.AiBatch
+import androidx.compose.material3.OutlinedButton
 import com.kakario.videoplayer.thumb.LocalVideoThumbs
 import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.border
@@ -224,6 +226,34 @@ fun FolderBrowser(
                     TextButton(onClick = { thumbs?.stopFolder() }) { Text("중지") }
                 }
             }
+            val aiJob = AiBatch.status.collectAsState().value
+            if (aiJob != null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        .padding(start = 16.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        buildString {
+                            append(if (aiJob.paused) "AI 자막 잠시 멈춤 · " else "AI 자막 ${aiJob.percent}% · ")
+                            append(aiJob.current)
+                            if (aiJob.waiting > 0) append(" · 대기 ${aiJob.waiting}")
+                            if (aiJob.doneCount > 0) append(" · 완료 ${aiJob.doneCount}")
+                            if (aiJob.skipCount > 0) append(" · 건너뜀 ${aiJob.skipCount}")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { AiBatch.stopAll() }) { Text("중지") }
+                }
+            }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (val s = state) {
@@ -345,6 +375,22 @@ fun FolderBrowser(
                         }
                     },
                 ) { Text("썸네일 다시 만들기") }
+                OutlinedButton(
+                    enabled = chosen.isNotEmpty(),
+                    onClick = {
+                        if (!AiBatch.ready(context)) {
+                            toast("설정 > 자막에서 AI 음성인식 모델을 먼저 받아 주세요")
+                        } else {
+                            chosen.forEach { e ->
+                                if (e.isDirectory) AiBatch.addFolder(context, origin, e.path, e.name)
+                                else if (e.isVideo) AiBatch.addFile(context, origin, e)
+                            }
+                            selecting = false
+                            selected = emptySet()
+                            toast("AI 자막 미리 만들기를 대기줄에 넣었어요 (한국 영상·자막 있는 것 제외)")
+                        }
+                    },
+                ) { Text("AI 자막") }
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = if (selecting) 64.dp else 0.dp))
@@ -375,6 +421,15 @@ fun FolderBrowser(
                             selecting = true
                             selected = setOf(target.path)
                         }
+                        MenuItem("💬  AI 자막 미리 만들기") {
+                            menuFor = null
+                            if (!AiBatch.ready(context)) {
+                                toast("설정 > 자막에서 AI 음성인식 모델을 먼저 받아 주세요")
+                            } else {
+                                AiBatch.addFile(context, origin, target)
+                                toast("AI 자막 만들기를 대기줄에 넣었어요 — 위쪽과 알림창에 진행 표시")
+                            }
+                        }
                         MenuItem("🖼️  썸네일 다시 만들기") {
                             menuFor = null
                             thumbs?.invalidate(origin, target)
@@ -396,6 +451,15 @@ fun FolderBrowser(
                             menuFor = null
                             selecting = true
                             selected = setOf(target.path)
+                        }
+                        MenuItem("💬  이 폴더 영상 AI 자막 모두 만들기") {
+                            menuFor = null
+                            if (!AiBatch.ready(context)) {
+                                toast("설정 > 자막에서 AI 음성인식 모델을 먼저 받아 주세요")
+                            } else {
+                                AiBatch.addFolder(context, origin, target.path, target.name)
+                                toast("'${target.name}' AI 자막 만들기를 대기줄에 넣었어요 (한국 영상·자막 있는 것 제외)")
+                            }
                         }
                         MenuItem("🔄  이 폴더 썸네일 모두 다시 만들기") {
                             menuFor = null

@@ -46,7 +46,12 @@ class AiSubtitleSession(
     private val llmModel: File?,
     /** 영상 전체 자막을 다 만들었을 때 (파일로 저장). 저장했으면 true. 작업 스레드에서 불린다. */
     private val onComplete: suspend (List<AiCue>, String?) -> Boolean = { _, _ -> false },
+    /** 미리 만들기(재생 없이): 처음부터 끝까지 만들고 파일로 저장한 뒤 끝낸다. */
+    private val batch: Boolean = false,
 ) {
+    /** 미리 만들기가 끝까지 완료됐는지. */
+    @Volatile var completed = false
+        private set
     /** 완성본을 파일로 저장했는지 (다시 저장하지 않게). */
     @Volatile private var exported = false
 
@@ -90,6 +95,11 @@ class AiSubtitleSession(
     private val dispatcher = worker.asCoroutineDispatcher()
     @Volatile private var whisperHandle = 0L
     @Volatile private var llmHandle = 0L
+
+    /** 끝날 때까지 기다리기 (미리 만들기용). */
+    suspend fun join() {
+        job?.join()
+    }
 
     fun start(scope: CoroutineScope, playhead: () -> Long) {
         if (job?.isActive == true) return
@@ -140,6 +150,10 @@ class AiSubtitleSession(
                                 exported = true
                                 saveCache()
                             }
+                        }
+                        if (batch) {
+                            completed = true
+                            return@launch
                         }
                         delay(1000)
                         continue

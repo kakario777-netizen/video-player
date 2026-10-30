@@ -5,6 +5,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 와이파이/모바일 데이터 구분 (모델 받기 확인, LTE 썸네일 설정) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- AI 자막 미리 만들기: 화면이 꺼져도 계속 (알림 표시) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 내 폰 탭: 안드로이드 10 이하 -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -34,6 +40,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".ai.AiBatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|mediaProcessing" />
     </application>
 
 </manifest>
