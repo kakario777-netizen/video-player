@@ -690,33 +690,35 @@ fun PlayerScreen(
                     }
                 }
             }
-            // 준비 상태 안내 (지금 위치에 자막이 아직 없을 때)
-            val msg = ai.failed ?: if (timeMs >= ai.readyUntilMs - 500) ai.status else null
-            // 조작 버튼이 보일 때는 전체 진행률도 (예: AI 자막 42% · 다 만들면 파일로 저장)
-            if (controlsVisible && !inPip && ai.failed == null && ai.progress in 0.001f..0.999f) {
-                Text(
-                    "🤖 AI 자막 전체 ${(ai.progress * 100).toInt()}% · 다 만들면 자막 파일로 저장",
-                    color = Color(0xFFCCCCCC),
-                    fontSize = 11.sp,
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(top = if (msg != null) 84.dp else 56.dp)
-                        .background(Color(0x77000000), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 10.dp, vertical = 3.dp),
-                )
+            // 작은 상태 표시: 오른쪽 위, 반투명, 이모티콘 없이
+            val notReady = timeMs >= ai.readyUntilMs - 500
+            val small = when {
+                ai.notice != null -> ai.notice
+                ai.korean -> null
+                ai.failed != null -> ai.failed
+                notReady && ai.status != null -> ai.status
+                controlsVisible && ai.progress in 0.001f..0.999f -> "AI 자막 ${(ai.progress * 100).toInt()}%"
+                else -> null
             }
-            if (msg != null && !inPip) {
+            // 안내 문구는 4초 뒤 사라짐
+            LaunchedEffect(ai.notice) {
+                if (ai.notice != null) {
+                    delay(4000)
+                    ai.notice = null
+                }
+            }
+            if (small != null && !inPip) {
                 Text(
-                    "🤖 $msg",
-                    color = Color.White,
-                    fontSize = 12.sp,
+                    small,
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontSize = 11.sp,
+                    maxLines = 1,
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
+                        .align(Alignment.TopEnd)
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(top = 56.dp)
-                        .background(Color(0x99000000), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                        .padding(top = if (controlsVisible) 58.dp else 10.dp, end = 12.dp)
+                        .background(Color(0x33000000), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
                 )
             }
         }

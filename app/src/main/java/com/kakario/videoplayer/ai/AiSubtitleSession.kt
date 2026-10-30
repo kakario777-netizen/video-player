@@ -71,6 +71,14 @@ class AiSubtitleSession(
         private set
     /** 감지한 말소리 언어 (ko, ja, zh, en …). */
     var language by mutableStateOf<String?>(null)
+    /** 잠깐 띄웠다 사라지는 안내 (예: 한국어 영상이라 안 만듦). */
+    var notice by mutableStateOf<String?>(null)
+    /** 한국어 영상으로 판단해 자막을 만들지 않기로 했는지. */
+    var korean by mutableStateOf(false)
+        private set
+    private val koreanMark = File(File(appCtx.filesDir, "aisubs"), sha1(videoKey) + ".ko")
+    /** 처음 한국어로 감지된 덩어리 (다른 덩어리에서 한 번 더 한국어면 한국어 영상). */
+    private var firstKoreanChunk = -1
         private set
     var failed by mutableStateOf<String?>(null)
         private set
@@ -88,6 +96,11 @@ class AiSubtitleSession(
         job = scope.launch(dispatcher) {
             var chunker: AudioSource? = null
             try {
+                if (koreanMark.exists()) {
+                    korean = true
+                    notice = "한국어 영상이라 AI 자막을 만들지 않아요"
+                    return@launch
+                }
                 loadCache()
                 if (!WhisperNative.available) {
                     failed = "AI 엔진을 불러오지 못했어요"
@@ -146,7 +159,7 @@ class AiSubtitleSession(
                         continue
                     }
                     val lines = String(raw, Charsets.UTF_8).split('\n')
-                    if (language == null) language = lines.firstOrNull()?.takeIf { it.isNotBlank() }
+                    val detected = lines.firstOrNull()?.takeIf { it.isNotBlank() }
                     val segs = lines.drop(1).mapNotNull { line ->
                         val p = line.split('\t', limit = 3)
                         if (p.size < 3) return@mapNotNull null
@@ -155,6 +168,32 @@ class AiSubtitleSession(
                         val text = p[2].trim()
                         if (text.isEmpty() || isHallucination(text)) return@mapNotNull null
                         AiCue(startMs + t0, startMs + minOf(t1, CHUNK_MS).coerceAtLeast(t0 + 500), text, null)
+                    }
+                    // 언어 판단: 말소리가 있는 덩어리에서만. 서로 다른 두 덩어리가 한국어면 한국어 영상 → 자막 안 만듦
+                    if (language == null && segs.isNotEmpty() && detected != null) {
+                        if (detected == "ko") {
+                            if (firstKoreanChunk >= 0 && firstKoreanChunk != next) {
+                                korean = true
+                                status = null
+                                notice = "한국어 영상이라 AI 자막을 만들지 않아요"
+                                runCatching { koreanMark.writeText("ko") }
+                                runCatching { cacheFile.delete() }
+                                withContext(Dispatchers.Main) { cues = emptyList() }
+                                return@launch
+                            }
+                            firstKoreanChunk = next
+                            done += next
+                            continue
+                        } else {
+                            language = detected
+                            // 앞에서 한국어로 잘못 들은 덩어리는 다시 만들기
+                            if (firstKoreanChunk >= 0) done -= firstKoreanChunk
+                        }
+                    }
+                    if (language == null) {
+                        // 아직 말소리가 없음 (음악·효과음 등)
+                        done += next
+                        continue
                     }
                     val translated = if (llmModel != null && language != null && language != "ko" && segs.isNotEmpty()) {
                         translate(segs)
