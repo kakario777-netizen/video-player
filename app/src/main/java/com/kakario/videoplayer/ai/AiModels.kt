@@ -98,14 +98,24 @@ class ModelManager(context: Context) {
         return if (file(m).exists() && file(m).length() > 1_000_000) ModelState.Ready else ModelState.None
     }
 
-    fun download(m: AiModel) {
+    /** 지금 모바일 데이터(LTE·5G)로 연결돼 있는지 (와이파이가 아니면 true). */
+    fun onMobileData(): Boolean {
+        val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) &&
+            !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) &&
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)
+    }
+
+    /** allowMobile = 모바일 데이터로도 받기 (사용자가 확인했을 때만). */
+    fun download(m: AiModel, allowMobile: Boolean = false) {
         if (state(m) is ModelState.Downloading) return
         partFile(m).delete()
         val req = DownloadManager.Request(Uri.parse(m.url))
             .setTitle("AI 모델 받는 중: ${m.title}")
             .setDescription("받은 뒤에는 폰 안에서만 쓰여요")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
-            .setAllowedOverMetered(false) // 와이파이에서만
+            .setAllowedOverMetered(allowMobile) // 기본은 와이파이에서만, 확인하면 데이터로도
             .setAllowedOverRoaming(false)
             .setDestinationUri(Uri.fromFile(partFile(m)))
         val id = dm.enqueue(req)

@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.ai.AiModel
+import com.kakario.videoplayer.ai.AiLibs
 import com.kakario.videoplayer.ai.AiShowMode
 import com.kakario.videoplayer.ai.AiSubtitleSession
 import com.kakario.videoplayer.ai.LlamaNative
@@ -65,6 +66,13 @@ fun AiSubtitleSettings() {
         }
     }
     var deleteAsk by remember { mutableStateOf<AiModel?>(null) }
+    var mobileAsk by remember { mutableStateOf<AiModel?>(null) }
+    var fastCpu by remember { mutableStateOf(store.aiFastCpu) }
+    // 받기: 와이파이면 바로, 모바일 데이터면 용량 알려주고 물어보기
+    fun startDownload(m: AiModel) {
+        if (models.onMobileData()) mobileAsk = m else models.download(m)
+        tick++
+    }
     var clearAsk by remember { mutableIntStateOf(0) }
 
     Column {
@@ -110,7 +118,7 @@ fun AiSubtitleSettings() {
                         whisper = m.name
                         store.aiWhisperModel = m.name
                     },
-                    onDownload = { models.download(m); tick++ },
+                    onDownload = { startDownload(m) },
                     onCancel = { models.cancel(m); tick++ },
                     onDelete = { deleteAsk = m },
                 )
@@ -141,13 +149,45 @@ fun AiSubtitleSettings() {
                     state = remember(tick) { models.state(AiModel.QWEN3_4B) },
                     selected = null,
                     onSelect = {},
-                    onDownload = { models.download(AiModel.QWEN3_4B); tick++ },
+                    onDownload = { startDownload(AiModel.QWEN3_4B) },
                     onCancel = { models.cancel(AiModel.QWEN3_4B); tick++ },
                     onDelete = { deleteAsk = AiModel.QWEN3_4B },
                 )
             }
 
-            SubHeader("③ 자막 보여주기")
+            SubHeader("③ 폰 성능 기능 더 쓰기")
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = fastCpu && AiLibs.hasI8mm, enabled = AiLibs.hasI8mm, onValueChange = {
+                        fastCpu = it
+                        store.aiFastCpu = it
+                    })
+                    .padding(horizontal = 24.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "AI 계산 전용 명령어(i8mm) 사용",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = if (AiLibs.hasI8mm) 1f else 0.4f),
+                    )
+                    Text(
+                        when {
+                            !AiLibs.hasI8mm -> "이 폰은 지원하지 않아요 — 기본 엔진으로 동작해요"
+                            fastCpu && AiLibs.fastLoaded -> "✓ 이 폰은 지원해요 — 자동으로 켜져서 고성능 엔진으로 동작 중"
+                            fastCpu -> "✓ 이 폰은 지원해요 — 자동으로 켜짐 (앱을 다시 켜면 고성능 엔진 적용)"
+                            else -> "꺼짐 — 앱을 다시 켜면 기본 엔진으로 동작해요"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (AiLibs.hasI8mm && fastCpu) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = fastCpu && AiLibs.hasI8mm, onCheckedChange = null, enabled = AiLibs.hasI8mm)
+            }
+
+            SubHeader("④ 자막 보여주기")
             AiShowMode.entries.forEach { mode ->
                 Row(
                     Modifier
@@ -187,7 +227,7 @@ fun AiSubtitleSettings() {
             }
             Text(
                 "재생을 시작하면 지금 위치부터 앞쪽 10분까지 미리 자막을 만들어요. 만든 자막은 저장돼서 다음에는 바로 나와요. " +
-                    "지원 형식: MP4·MKV·TS·WEBM 등",
+                    "AVI·WMV·RMVB·FLV·MPG·MKV·MP4 등 모든 영상에서 동작해요",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp),
@@ -196,6 +236,33 @@ fun AiSubtitleSettings() {
                 Text("만들어 둔 AI 자막 모두 지우기")
             }
         }
+    }
+
+    mobileAsk?.let { m ->
+        AlertDialog(
+            onDismissRequest = { mobileAsk = null },
+            title = { Text("모바일 데이터로 받을까요?") },
+            text = {
+                Text(
+                    "지금 와이파이가 아니에요.\n'${m.title}'은 약 ${formatBytes(m.approxBytes)}라 데이터 요금이 나올 수 있어요.\n\n" +
+                        "'와이파이 기다리기'를 고르면 와이파이에 연결될 때 자동으로 받아요."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    models.download(m, allowMobile = true)
+                    mobileAsk = null
+                    tick++
+                }) { Text("데이터로 받기") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    models.download(m, allowMobile = false)
+                    mobileAsk = null
+                    tick++
+                }) { Text("와이파이 기다리기") }
+            },
+        )
     }
 
     deleteAsk?.let { m ->

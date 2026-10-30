@@ -13,6 +13,9 @@ add_subdirectory(${WHISPER_SRC} whisper_build EXCLUDE_FROM_ALL)
 
 add_library(whisper_jni SHARED whisper_jni.cpp)
 target_link_libraries(whisper_jni PRIVATE whisper)
+# 고성능판(i8mm)은 이름 뒤에 _i8mm를 붙여 따로 만든다
+set(JNI_SUFFIX "" CACHE STRING "")
+set_target_properties(whisper_jni PROPERTIES OUTPUT_NAME whisper_jni${JNI_SUFFIX})
 if (ANDROID)
     target_link_libraries(whisper_jni PRIVATE log)
     # 내부 ggml 기호를 밖으로 내보내지 않아 llama 쪽 ggml과 부딪히지 않게

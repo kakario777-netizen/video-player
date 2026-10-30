@@ -180,6 +180,13 @@ class SettingsStore(context: Context) {
             prefs.edit().putString("ai_show", value).apply()
         }
 
+    /** 폰 성능 기능 더 쓰기 (i8mm 지원 폰이면 고성능 엔진). 기본 켜짐. */
+    var aiFastCpu: Boolean
+        get() = prefs.getBoolean("ai_fast_cpu", true)
+        set(value) {
+            prefs.edit().putBoolean("ai_fast_cpu", value).apply()
+        }
+
     /** 자막 파일이 이미 있으면 AI 자막을 만들지 않기. */
     var aiOnlyWithoutSubs: Boolean
         get() = prefs.getBoolean("ai_only_nosubs", true)

@@ -144,6 +144,8 @@ class MainActivity : ComponentActivity() {
         val thumbs = VideoThumbs.get(applicationContext)
         val playback = PlaybackStore.get(applicationContext)
         pipEnabled = settingsStore.pip
+        // AI 엔진: 지원 폰이면 고성능판을 쓰도록 (엔진은 처음 쓸 때 불러온다)
+        com.kakario.videoplayer.ai.AiLibs.preferFast = settingsStore.aiFastCpu
 
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }

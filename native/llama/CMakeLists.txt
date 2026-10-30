@@ -16,6 +16,9 @@ add_subdirectory(${LLAMA_SRC} llama_build EXCLUDE_FROM_ALL)
 
 add_library(llama_jni SHARED llama_jni.cpp)
 target_link_libraries(llama_jni PRIVATE llama)
+# 고성능판(i8mm)은 이름 뒤에 _i8mm를 붙여 따로 만든다
+set(JNI_SUFFIX "" CACHE STRING "")
+set_target_properties(llama_jni PROPERTIES OUTPUT_NAME llama_jni${JNI_SUFFIX})
 if (ANDROID)
     target_link_libraries(llama_jni PRIVATE log)
     target_link_options(llama_jni PRIVATE -Wl,--exclude-libs,ALL -Wl,--gc-sections -Wl,-z,max-page-size=16384)

@@ -7,12 +7,36 @@ import android.media.MediaFormat
 import java.io.Closeable
 import java.nio.ByteOrder
 
+/** 영상에서 16kHz 모노 소리를 원하는 구간만큼 꺼내는 통로. */
+interface AudioSource : Closeable {
+    override val durationMs: Long
+    fun read(startMs: Long, lenMs: Long): FloatArray?
+
+    companion object {
+        /** FFmpeg(모든 형식) 먼저, 안 되면 안드로이드 기본 디코더. */
+        fun open(source: String, isUrl: Boolean): AudioSource {
+            if (AudioNative.available) {
+                val h = AudioNative.open(source)
+                if (h != 0L) return FfmpegAudio(h)
+            }
+            return AudioChunker(source, isUrl)
+        }
+    }
+}
+
+/** FFmpeg로 꺼내기 — AVI·WMV·RMVB·FLV·MPG·VOB·MKV·MP4 등 거의 모든 형식. */
+class FfmpegAudio(private val handle: Long) : AudioSource {
+    override val durationMs: Long = AudioNative.durationMs(handle)
+    override fun read(startMs: Long, lenMs: Long): FloatArray? = AudioNative.read(handle, startMs, lenMs)
+    override fun close() = AudioNative.close(handle)
+}
+
 /**
- * 영상에서 소리만 꺼내 Whisper가 먹는 형태(16kHz·모노·float)로 바꿔준다.
- * 안드로이드 기본 디코더를 쓰므로 MP4·MKV·TS·WEBM(AAC·MP3·AC3·Opus 등) 영상이 대상.
+ * 안드로이드 기본 디코더로 소리 꺼내기 (FFmpeg가 안 될 때 예비).
+ * MP4·MKV·TS·WEBM(AAC·MP3·AC3·Opus 등)이 대상.
  * 원하는 위치부터 원하는 길이만큼 읽고, 이어서 읽으면 되감지 않고 계속 디코딩한다.
  */
-class AudioChunker(source: String, isUrl: Boolean) : Closeable {
+class AudioChunker(source: String, isUrl: Boolean) : AudioSource {
     private val extractor = MediaExtractor()
     private val codec: MediaCodec
     private var srcRate = 44100
@@ -54,7 +78,7 @@ class AudioChunker(source: String, isUrl: Boolean) : Closeable {
     }
 
     /** startMs부터 lenMs 길이의 16kHz 모노 소리. 영상 끝이면 남은 만큼, 아무것도 없으면 null. */
-    fun read(startMs: Long, lenMs: Long): FloatArray? {
+    override fun read(startMs: Long, lenMs: Long): FloatArray? {
         if (streamPosMs < 0 || kotlin.math.abs(startMs - streamPosMs) > 300) {
             extractor.seekTo(startMs * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             codec.flush()

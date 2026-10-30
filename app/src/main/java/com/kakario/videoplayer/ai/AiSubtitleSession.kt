@@ -74,7 +74,7 @@ class AiSubtitleSession(
     fun start(scope: CoroutineScope, playhead: () -> Long) {
         if (job?.isActive == true) return
         job = scope.launch(dispatcher) {
-            var chunker: AudioChunker? = null
+            var chunker: AudioSource? = null
             try {
                 loadCache()
                 if (!WhisperNative.available) {
@@ -87,10 +87,11 @@ class AiSubtitleSession(
                     failed = "음성인식 모델을 열지 못했어요. 설정에서 다시 받아 주세요"
                     return@launch
                 }
+                status = "영상 소리 여는 중…"
                 chunker = try {
-                    AudioChunker(source, isUrl)
+                    AudioSource.open(source, isUrl)
                 } catch (e: Exception) {
-                    failed = "이 영상은 소리를 꺼낼 수 없어요 (MP4·MKV·TS·WEBM 지원)"
+                    failed = "이 영상에서 소리를 꺼내지 못했어요"
                     return@launch
                 }
                 durationMs = chunker.durationMs
