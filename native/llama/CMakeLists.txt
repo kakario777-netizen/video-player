@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.22)
+project(llama_jni CXX C)
+
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(${LLAMA_SRC} llama_build EXCLUDE_FROM_ALL)
+
+add_library(llama_jni SHARED llama_jni.cpp)
+target_link_libraries(llama_jni PRIVATE llama)
+if (ANDROID)
+    target_link_libraries(llama_jni PRIVATE log)
+    target_link_options(llama_jni PRIVATE -Wl,--exclude-libs,ALL -Wl,--gc-sections -Wl,-z,max-page-size=16384)
+endif()

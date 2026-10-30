@@ -10,3 +10,8 @@
 .cxx/
 *.apk
 !app/debug.keystore
+
+# AI 엔진 빌드 산출물
+/native/.src/
+/native/.build/
+/app/src/main/jniLibs/

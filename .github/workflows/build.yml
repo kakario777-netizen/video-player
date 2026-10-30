@@ -27,6 +27,20 @@ jobs:
         with:
           gradle-version: 8.11.1
 
+      # AI 자막 엔진(whisper.cpp·llama.cpp) — 소스가 안 바뀌면 이전 빌드 결과를 재사용
+      - name: Cache AI engine
+        id: native-cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/jniLibs
+          key: native-${{ hashFiles('native/**') }}
+
+      - name: Build AI engine (NDK)
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: |
+          which ninja || sudo apt-get install -y ninja-build
+          bash native/build.sh 2>&1 | tee native.log
+
       - name: Build debug APK
         run: |
           set -o pipefail
@@ -36,7 +50,8 @@ jobs:
       - name: Report build errors
         if: failure()
         run: |
-          msg=$( (grep -A12 "AAR metadata" build.log | head -14; grep -E "^e: |Could not |Unresolved" build.log | head -25)  | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          touch build.log native.log
+          msg=$( (grep -A12 "AAR metadata" build.log | head -14; grep -E "^e: |Could not |Unresolved" build.log | head -25; grep -E "error:|Error |FAILED" native.log | head -15)  | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=BuildErrors::${msg}"
 
       - name: Rename APK
