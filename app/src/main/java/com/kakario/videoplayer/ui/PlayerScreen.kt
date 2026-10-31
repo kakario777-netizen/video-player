@@ -733,7 +733,7 @@ fun PlayerScreen(
                     ai.notice = null
                 }
             }
-            if ((small != null || pauseHint != null) && !inPip) {
+            if ((small != null || pauseHint != null || ai.stageLines(nowTick) != null) && !inPip) {
                 Column(
                     Modifier
                         .align(Alignment.TopEnd)
@@ -741,37 +741,43 @@ fun PlayerScreen(
                         .padding(top = if (controlsVisible) 58.dp else 10.dp, end = 12.dp),
                     horizontalAlignment = Alignment.End,
                 ) {
-                    if (small != null) {
-                        Row(
+                    // 안내(한국어 영상·오류 등)가 있으면 한 줄, 아니면 단계별 3줄
+                    val stageLines = if (ai.notice == null && ai.failed == null && !ai.korean) ai.stageLines(nowTick) else null
+                    if (stageLines != null) {
+                        Column(
                             Modifier
                                 .background(Color(0x33000000), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
                         ) {
-                            // 원형(케이크) 진행: 파랑 = 번역 끝, 하늘색 = 음성 인식까지
-                            val tr = ai.translatedFraction(aiChunkMap)
-                            val hd = ai.heardFraction(aiChunkMap)
-                            if (!ai.korean && ai.failed == null && ai.notice == null) {
-                                androidx.compose.foundation.Canvas(Modifier.size(14.dp)) {
-                                    drawCircle(Color(0x55FFFFFF))
-                                    drawArc(Color(0xFF8FD3FF), -90f, 360f * hd, useCenter = true)
-                                    drawArc(Color(0xFF2F7BFF), -90f, 360f * tr, useCenter = true)
+                            stageLines.forEach { (label, value) ->
+                                val active = value.startsWith("진행") || value.startsWith("받는") || value.startsWith("엔진")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        label,
+                                        color = Color.White.copy(alpha = if (active) 0.95f else 0.6f),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.width(92.dp),
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        value,
+                                        color = if (active) Color(0xFF8FD3FF) else Color.White.copy(alpha = 0.6f),
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                    )
                                 }
-                                Spacer(Modifier.width(5.dp))
-                                Text(
-                                    "${(tr * 100).toInt()}% · ",
-                                    color = Color.White.copy(alpha = 0.75f),
-                                    fontSize = 11.sp,
-                                    maxLines = 1,
-                                )
                             }
-                            Text(
-                                small,
-                                color = Color.White.copy(alpha = 0.75f),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                            )
                         }
+                    } else if (small != null) {
+                        Text(
+                            small,
+                            color = Color.White.copy(alpha = 0.75f),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .background(Color(0x33000000), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
                     }
                     if (pauseHint != null) {
                         Spacer(Modifier.height(4.dp))

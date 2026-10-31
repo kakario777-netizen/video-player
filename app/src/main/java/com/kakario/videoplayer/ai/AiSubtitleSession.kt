@@ -137,6 +137,51 @@ class AiSubtitleSession(
         else -> "large"
     }
 
+    /** 지금 구간에서 끝난 단계의 걸린 시간 (-1 = 아직). 오른쪽 위 3줄 표시용. */
+    var curAudioMs by mutableLongStateOf(-1L)
+        private set
+    var curWhisperMs by mutableLongStateOf(-1L)
+        private set
+
+    /**
+     * 오른쪽 위 3줄: 소리 받기 / 음성 인식 / 한글 번역 — 각 단계가 지금 어떤지.
+     * 다 만들었거나 표시할 게 없으면 null.
+     */
+    fun stageLines(now: Long): List<Pair<String, String>>? {
+        if (korean || failed != null) return null
+        val warm = LlmHolder.warmRemainSec(now)
+        if (progress >= 1f && warm == null) return null
+        val st = stage
+        val el = ((now - stageSince) / 1000).coerceAtLeast(0)
+        fun secs(ms: Long) = String.format("%.1f초", ms / 1000.0)
+        val audio = when {
+            st == "소리 받는 중" -> "받는 중 ${el}초"
+            curAudioMs >= 0 -> "완료 ${secs(curAudioMs)}"
+            else -> "대기"
+        }
+        val whisper = when {
+            st == "음성 인식 중" -> {
+                val left = ((whisperMs - (now - stageSince)) / 1000).coerceAtLeast(1)
+                "진행 중 ${el}초 · 약 ${left}초 남음"
+            }
+            curWhisperMs >= 0 -> "완료 ${secs(curWhisperMs)}"
+            else -> "대기"
+        }
+        val lines = mutableListOf("소리 받기" to audio, "음성 인식 ($whisperName)" to whisper)
+        if (llmModel != null && language != "ko") {
+            val pct = "전체 ${(progress * 100).toInt()}%"
+            val tr = when {
+                warm != null -> "엔진 준비 중 · 약 ${warm}초 남음"
+                st == "번역 중" -> "진행 중 ${el}초 · $pct"
+                st == "음성 인식 중" -> "약 ${((whisperMs - (now - stageSince)) / 1000).coerceAtLeast(1)}초 뒤 시작 · $pct"
+                st == "소리 받는 중" -> "대기 · $pct"
+                else -> pct
+            }
+            lines += "한글 번역" to tr
+        }
+        return lines
+    }
+
     /** 최근 구간별 걸린 시간 (자막 메뉴에서 확인). 최신이 앞. */
     var timings by mutableStateOf<List<String>>(emptyList())
         private set
@@ -306,10 +351,15 @@ class AiSubtitleSession(
                     withContext(Dispatchers.Main) { workStartMs = startMs }
                     status = if (startMs <= ph + 2_000) "AI 자막 만드는 중…"
                     else "AI 자막 ${mmss(startMs)}부터 준비 중"
+                    withContext(Dispatchers.Main) {
+                        curAudioMs = -1L
+                        curWhisperMs = -1L
+                    }
                     stage("소리 받는 중")
                     val aT0 = System.currentTimeMillis()
                     val pcm = chunker.read(startMs, CHUNK_MS)
                     val audioTook = System.currentTimeMillis() - aT0
+                    withContext(Dispatchers.Main) { curAudioMs = audioTook }
                     if (pcm == null || rms(pcm) < SILENCE) {
                         addTiming("${mmss(startMs)} · 소리 ${sec1(audioTook)} · 대사 없음")
                         done += next
@@ -320,6 +370,7 @@ class AiSubtitleSession(
                     val wT0 = System.currentTimeMillis()
                     val raw = WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", threads, false)
                     val whisperTook = System.currentTimeMillis() - wT0
+                    withContext(Dispatchers.Main) { curWhisperMs = whisperTook }
                     whisperMs = (whisperMs * 0.6 + whisperTook * 0.4).toLong()
                     stage(null)
                     if (!isActive) return@launch
