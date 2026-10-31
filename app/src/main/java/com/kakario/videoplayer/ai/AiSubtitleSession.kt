@@ -85,26 +85,80 @@ class AiSubtitleSession(
         private set
     private var workSince = 0L
 
-    /**
-     * 오른쪽 위에 띄울 쉬운 안내. 지금 보는 위치의 자막이 이미 있으면 null.
-     * 예) "번역 준비 중 · 약 20초 남음", "지금 장면 번역 자막 만드는 중 · 약 12초 남음", "약 25초 뒤부터 번역 자막이 나와요"
-     */
-    fun friendlyLabel(ph: Long, now: Long): String? {
-        if (korean || failed != null) return null
-        val what = if (llmModel != null && language != "ko") "번역 자막" else "AI 자막"
-        val chunk = (ph / CHUNK_MS).toInt()
-        if (chunk in done) return null
-        LlmHolder.warmRemainSec(now)?.let { return "번역 준비 중 · 약 ${it}초 남음" }
-        val ws = workStartMs
-        if (ws < 0) return if (status != null) "$what 준비 중" else null
-        val remain = (procMs - (now - workSince)).coerceAtLeast(1_000)
-        if ((ws / CHUNK_MS).toInt() == chunk) return "지금 장면 $what 만드는 중 · 약 ${remain / 1000}초 남음"
-        if (ws > ph) {
-            val wait = maxOf(ws - ph, remain)
-            return "약 ${wait / 1000}초 뒤부터 $what${if (what.endsWith("막")) "이" else "가"} 나와요"
+    /** 재생 화면이 일시정지 중인지 — 멈춰 있으면 지금 위치부터 먼저 만든다. */
+    @Volatile var playerPaused = false
+
+    /** 단계별 평균 걸린 시간 (따로 재야 남은 시간이 정확함). */
+    @Volatile private var whisperMs = if (whisperModel.name.contains("small")) 10_000L else 30_000L
+    @Volatile private var translateMs = 8_000L
+    private val translateWanted get() = llmModel != null && language != "ko"
+
+    /** 완성된 구간 번호들 (재생 막대에 파랗게 칠하기용). */
+    fun doneChunks(): Set<Int> = HashSet(done)
+    val chunkMs get() = CHUNK_MS
+
+    /** 지금 하는 덩어리가 끝날 때까지 남은 ms (대략, 넉넉히). */
+    private fun workRemainMs(now: Long): Long {
+        val elapsed = now - stageSince
+        return when (stage) {
+            "소리 받는 중" -> whisperMs + (if (translateWanted) translateMs else 0)
+            "음성 인식 중" -> (whisperMs - elapsed).coerceAtLeast(1_000) + (if (translateWanted) translateMs else 0)
+            "번역 중" -> (translateMs - elapsed).coerceAtLeast(1_000)
+            else -> whisperMs + (if (translateWanted) translateMs else 0)
         }
-        return "$what 준비 중"
     }
+
+    /**
+     * 오른쪽 위 안내. 예) "번역 12% · 음성 인식 중 · 약 8초 뒤 번역 시작", "번역 12% · 번역 중".
+     * 다 만들었으면 null.
+     */
+    fun topLabel(now: Long): String? {
+        if (korean || failed != null) return null
+        val word = if (translateWanted) "번역" else "AI 자막"
+        LlmHolder.warmRemainSec(now)?.let { return "번역 엔진 준비 중 · 약 ${it}초 남음" }
+        val pct = (progress * 100).toInt()
+        if (progress >= 1f) return null
+        val head = "$word $pct%"
+        return when (stage) {
+            "소리 받는 중", "음성 인식 중" -> {
+                if (translateWanted) {
+                    val left = (((whisperMs - (now - stageSince)).coerceAtLeast(1_000) + 999) / 1000)
+                    "$head · 음성 인식 중 · 약 ${left}초 뒤 번역 시작"
+                } else "$head · 음성 인식 중"
+            }
+            "번역 중" -> "$head · 번역 중"
+            else -> if (status != null) "$head · 준비 중" else head
+        }
+    }
+
+    /**
+     * 지금 위치에 자막이 아직 없을 때 띄울 일시정지 안내. 있으면 null.
+     * 재생 중: "처음부터 자막을 원하시면 약 40초간 일시정지해 주세요"
+     * 멈춤 중: "약 25초 후 첫 번역 자막이 나와요" / 준비되면 "번역 자막 준비됐어요 · 재생해 주세요"
+     */
+    fun pauseHint(ph: Long, now: Long, paused: Boolean): String? {
+        if (korean || failed != null || durationMs <= 0) return null
+        val chunk = (ph / CHUNK_MS).toInt()
+        val word = if (translateWanted) "번역 자막" else "AI 자막"
+        if (chunk in done) {
+            if (!paused) hintShown = false
+            return if (paused && hintShown) "$word 준비됐어요 · 재생해 주세요" else null
+        }
+        val warm = (LlmHolder.warmRemainSec(now) ?: 0) * 1000
+        val ws = workStartMs
+        val full = whisperMs + (if (translateWanted) translateMs else 0)
+        // 지금 위치 덩어리를 만드는 중이면 남은 만큼, 아니면 하던 것 끝내고 한 덩어리 더
+        val wait = when {
+            ws >= 0 && (ws / CHUNK_MS).toInt() == chunk -> workRemainMs(now)
+            ws >= 0 -> workRemainMs(now) + full
+            else -> full
+        } + warm + 2_000 // 넉넉히
+        val sec = (wait + 999) / 1000
+        hintShown = true
+        return if (paused) "약 ${sec}초 후 첫 ${word}이 나와요"
+        else "처음부터 자막을 원하시면 약 ${sec}초간 일시정지해 주세요"
+    }
+    private var hintShown = false
 
     /** 지금 위치부터 끊김 없이 자막이 준비된 지점(ms). */
     var readyUntilMs by mutableLongStateOf(0L)
@@ -178,7 +232,7 @@ class AiSubtitleSession(
                     // 지금 보는 위치부터 끝까지 먼저, 그다음 앞쪽 빈 곳 (영상 전체를 다 만든다).
                     // 한 덩어리 처리에 걸리는 시간만큼 앞을 내다봐서, 결과가 나왔을 때 아직 안 지나간 구간을 고른다
                     // (처리가 재생보다 느려도 자막이 화면에 제때 뜨도록).
-                    val readyAt = if (batch) 0L else ph + procMs + 1_500
+                    val readyAt = if (batch || playerPaused) 0L else ph + procMs + 1_500
                     val next = (first..last).firstOrNull { it !in done && (it + 1) * CHUNK_MS > readyAt }
                         ?: (first..last).firstOrNull { it !in done }
                         ?: (0 until minOf(first, last + 1)).firstOrNull { it !in done }
@@ -214,7 +268,9 @@ class AiSubtitleSession(
                         continue
                     }
                     stage("음성 인식 중")
+                    val wT0 = System.currentTimeMillis()
                     val raw = WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", threads, false)
+                    whisperMs = (whisperMs * 0.6 + (System.currentTimeMillis() - wT0) * 0.4).toLong()
                     stage(null)
                     if (!isActive) return@launch
                     if (raw == null) {
@@ -267,7 +323,13 @@ class AiSubtitleSession(
                     }
                     val translated = if (llmModel != null && language != null && language != "ko" && segs.isNotEmpty()) {
                         stage("번역 중")
-                        translate(segs).also { stage(null) }
+                        val tT0 = System.currentTimeMillis()
+                        val wasOpen = LlmHolder.isOpen
+                        translate(segs).also {
+                            stage(null)
+                            // 예열 시간이 섞인 첫 번역은 빼고 평균
+                            if (wasOpen) translateMs = (translateMs * 0.6 + (System.currentTimeMillis() - tT0) * 0.4).toLong()
+                        }
                     } else segs
                     if (!isActive) return@launch
                     withContext(Dispatchers.Main) {

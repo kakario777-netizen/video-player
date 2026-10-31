@@ -424,6 +424,20 @@ fun PlayerScreen(
     var aiOn by remember(key) { mutableStateOf(false) }
     var aiShow by remember { mutableStateOf(AiShowMode.entries.firstOrNull { it.name == aiStore.aiShowMode } ?: AiShowMode.BOTH) }
     var aiSession by remember(key) { mutableStateOf<AiSubtitleSession?>(null) }
+    // 번역까지 끝난 구간 (재생 막대 파란색) — 1초마다 갱신
+    var aiReadyChunks by remember(key) { mutableStateOf<Set<Int>>(emptySet()) }
+    LaunchedEffect(aiSession) {
+        val ai = aiSession
+        if (ai == null) {
+            aiReadyChunks = emptySet()
+            return@LaunchedEffect
+        }
+        while (true) {
+            val d = ai.doneChunks()
+            if (d != aiReadyChunks) aiReadyChunks = d
+            delay(1000)
+        }
+    }
     // 자막 파일 찾기가 끝나면, 설정에 따라 자동으로 켠다
     LaunchedEffect(key, subSearchDone) {
         if (subSearchDone && aiStore.aiSubtitles && whisperReady &&
@@ -696,8 +710,7 @@ fun PlayerScreen(
                     }
                 }
             }
-            // 작은 상태 표시: 오른쪽 위, 반투명, 이모티콘 없이
-            // 1초마다 남은 시간 다시 계산 (일시정지 중에도)
+            // 작은 상태 표시: 오른쪽 위, 반투명, 이모티콘 없이 (1초마다 남은 시간 다시 계산)
             var nowTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
             LaunchedEffect(Unit) {
                 while (true) {
@@ -705,15 +718,14 @@ fun PlayerScreen(
                     nowTick = System.currentTimeMillis()
                 }
             }
-            val friendly = ai.friendlyLabel(timeMs, nowTick)
+            ai.playerPaused = !playing
             val small = when {
                 ai.notice != null -> ai.notice
                 ai.korean -> null
                 ai.failed != null -> ai.failed
-                friendly != null -> friendly
-                controlsVisible && ai.progress in 0.001f..0.999f -> "AI 자막 ${(ai.progress * 100).toInt()}%"
-                else -> null
+                else -> ai.topLabel(nowTick)
             }
+            val pauseHint = if (ai.notice == null) ai.pauseHint(timeMs, nowTick, paused = !playing) else null
             // 안내 문구는 4초 뒤 사라짐
             LaunchedEffect(ai.notice) {
                 if (ai.notice != null) {
@@ -721,19 +733,39 @@ fun PlayerScreen(
                     ai.notice = null
                 }
             }
-            if (small != null && !inPip) {
-                Text(
-                    small,
-                    color = Color.White.copy(alpha = 0.75f),
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    modifier = Modifier
+            if ((small != null || pauseHint != null) && !inPip) {
+                Column(
+                    Modifier
                         .align(Alignment.TopEnd)
                         .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .padding(top = if (controlsVisible) 58.dp else 10.dp, end = 12.dp)
-                        .background(Color(0x33000000), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                )
+                        .padding(top = if (controlsVisible) 58.dp else 10.dp, end = 12.dp),
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    if (small != null) {
+                        Text(
+                            small,
+                            color = Color.White.copy(alpha = 0.75f),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .background(Color(0x33000000), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                    if (pauseHint != null) {
+                        Spacer(Modifier.height(4.dp))
+                        // 일시정지 안내는 조금 더 잘 보이게
+                        Text(
+                            pauseHint,
+                            color = Color.White.copy(alpha = 0.9f),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .background(Color(0x66000000), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                }
             }
         }
 
@@ -950,6 +982,8 @@ fun PlayerScreen(
                             SeekBar(
                                 timeMs = timeMs,
                                 lengthMs = lengthMs,
+                                readyChunks = aiReadyChunks,
+                                chunkMs = 30_000L,
                                 onSeek = { ms ->
                                     player.time = ms
                                     timeMs = ms
@@ -1219,6 +1253,8 @@ private fun RoundButton(label: String, sizeDp: Int, onClick: () -> Unit) {
 private fun SeekBar(
     timeMs: Long,
     lengthMs: Long,
+    readyChunks: Set<Int>,
+    chunkMs: Long,
     onSeek: (Long) -> Unit,
     onDragging: () -> Unit,
 ) {
@@ -1235,6 +1271,28 @@ private fun SeekBar(
             modifier = Modifier.width(64.dp),
             textAlign = TextAlign.Center,
         )
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+        // 번역(AI 자막)까지 다 된 구간을 막대 위에 파랗게 칠한다
+        if (readyChunks.isNotEmpty() && lengthMs > 0) {
+            androidx.compose.foundation.Canvas(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp)
+                    .height(4.dp)
+            ) {
+                val total = ((lengthMs - 1) / chunkMs + 1).toInt()
+                for (i in readyChunks) {
+                    if (i < 0 || i >= total) continue
+                    val x0 = size.width * (i * chunkMs).toFloat() / lengthMs
+                    val x1 = size.width * minOf((i + 1) * chunkMs, lengthMs).toFloat() / lengthMs
+                    drawRect(
+                        Color(0xFF2F7BFF),
+                        topLeft = Offset(x0, 0f),
+                        size = androidx.compose.ui.geometry.Size(x1 - x0 + 0.5f, size.height),
+                    )
+                }
+            }
+        }
         Slider(
             value = shown,
             onValueChange = {
@@ -1249,11 +1307,13 @@ private fun SeekBar(
             enabled = lengthMs > 0,
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
-                activeTrackColor = Color(0xFF5B9DFF),
-                inactiveTrackColor = Color(0x66FFFFFF),
+                // 본 부분은 흰색, 아직 안 본 부분은 투명하게 → 밑의 파란 '번역 완료' 구간이 보이도록
+                activeTrackColor = Color(0xDDFFFFFF),
+                inactiveTrackColor = Color(0x40FFFFFF),
             ),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth(),
         )
+        }
         Text(
             if (lengthMs > 0) formatTime(lengthMs) else "--:--",
             color = Color.White,
