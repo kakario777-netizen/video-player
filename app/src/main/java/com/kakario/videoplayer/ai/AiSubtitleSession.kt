@@ -310,6 +310,7 @@ class AiSubtitleSession(
                 notice = "번역 모델을 열지 못했어요 — 원어 자막만 보여요"
                 return segs
             }
+            AiTranslator.warm(llmHandle)
             translateInfo = "번역 모델 준비 완료 (${(System.currentTimeMillis() - t0) / 1000}초)"
         }
         val out = ArrayList<AiCue>(segs.size)

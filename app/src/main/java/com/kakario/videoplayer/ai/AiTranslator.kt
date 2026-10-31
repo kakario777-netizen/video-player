@@ -10,6 +10,13 @@ object AiTranslator {
 
     private const val PREFILL = "<think>\n\n</think>\n\n" // Qwen3 생각 모드 끄기 (바로 답)
 
+    /** 묶음 번역 지시문 — 매번 같아야 캐시에 남아 다시 계산하지 않는다. */
+    private const val SYS = "너는 영상 자막 전문 번역가야. 번호가 붙은 각 줄을 자연스러운 한국어 구어체 자막으로 번역해. " +
+        "번호와 줄 수를 그대로 지키고, '1. 번역문' 형식으로 번역한 줄만 출력해. 설명이나 원문은 쓰지 마."
+
+    /** 모델 연 직후 한 번: 첫 계산 준비 + 지시문 미리 넣기. 걸린 ms (-1 실패). */
+    fun warm(handle: Long): Long = LlamaNative.warmup(handle, SYS.toByteArray())
+
     fun langName(code: String?) = when (code) {
         "ja" -> "일본어"
         "zh" -> "중국어"
@@ -19,8 +26,7 @@ object AiTranslator {
 
     fun translate(handle: Long, lines: List<String>, context: List<String>, lang: String?): Result {
         if (lines.isEmpty()) return Result(emptyList(), "번역할 줄 없음")
-        val sys = "너는 영상 자막 전문 번역가야. 번호가 붙은 각 줄을 자연스러운 한국어 구어체 자막으로 번역해. " +
-            "번호와 줄 수를 그대로 지키고, '1. 번역문' 형식으로 번역한 줄만 출력해. 설명이나 원문은 쓰지 마."
+        val sys = SYS
         val user = buildString {
             if (context.isNotEmpty()) {
                 append("앞 대사 (참고만 하고 번역하지 마):\n")

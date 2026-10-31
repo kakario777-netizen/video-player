@@ -24,6 +24,8 @@ struct LlmHandle {
     // 마지막 generate 통계: 입력 토큰 수, 생성 토큰 수, 입력 처리 ms, 생성 ms
     long long st_prompt = 0, st_gen = 0, st_prompt_ms = 0, st_gen_ms = 0;
     int threads = 0;
+    // KV 캐시에 이미 들어 있는 토큰들 (앞부분이 같으면 다시 계산하지 않음)
+    std::vector<llama_token> cached;
 };
 
 static long long now_ms() {
@@ -42,6 +44,44 @@ static std::string jstr(JNIEnv *env, jbyteArray b) {
     std::string s(n, '\0');
     env->GetByteArrayRegion(b, 0, n, reinterpret_cast<jbyte *>(&s[0]));
     return s;
+}
+
+/**
+ * 토큰들을 모델에 넣는다. 지난번과 앞부분이 같으면 그 부분은 건너뛰고 달라진 뒤쪽만 계산한다.
+ * (번역 지시문은 매번 같아서, 이것만으로 입력 처리 시간이 크게 준다)
+ * 성공하면 새로 계산한 토큰 수, 실패하면 -1.
+ */
+static int eval_tokens(LlmHandle *h, const std::vector<llama_token> &toks) {
+    int n = (int) toks.size();
+    int p = 0;
+    int lim = std::min((int) h->cached.size(), n - 1); // 마지막 토큰은 늘 다시 넣어야 다음 단어를 고를 수 있음
+    while (p < lim && h->cached[p] == toks[p]) p++;
+    if (p == 0) {
+        llama_kv_self_clear(h->ctx);
+    } else if (!llama_kv_self_seq_rm(h->ctx, 0, p, -1)) {
+        llama_kv_self_clear(h->ctx);
+        p = 0;
+    }
+    h->cached.assign(toks.begin(), toks.begin() + p);
+    for (int i = p; i < n; i += h->n_batch) {
+        if (h->abort.load()) return -1;
+        int cnt = std::min(h->n_batch, n - i);
+        llama_batch batch = llama_batch_get_one(const_cast<llama_token *>(toks.data()) + i, cnt);
+        if (llama_decode(h->ctx, batch) != 0) {
+            h->cached.clear();
+            llama_kv_self_clear(h->ctx);
+            return -1;
+        }
+        h->cached.insert(h->cached.end(), toks.begin() + i, toks.begin() + i + cnt);
+    }
+    return n - p;
+}
+
+static bool tokenize(LlmHandle *h, const std::string &text, std::vector<llama_token> &out) {
+    int n = -llama_tokenize(h->vocab, text.c_str(), (int32_t) text.size(), nullptr, 0, true, true);
+    if (n <= 0) return false;
+    out.resize(n);
+    return llama_tokenize(h->vocab, text.c_str(), (int32_t) text.size(), out.data(), n, true, true) >= 0;
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -133,22 +173,16 @@ Java_com_kakario_videoplayer_ai_LlamaNative_generate(
     std::string prompt(buf.data(), len);
     prompt += prefill;
 
-    int n = -llama_tokenize(h->vocab, prompt.c_str(), (int32_t) prompt.size(), nullptr, 0, true, true);
-    if (n <= 0) return nullptr;
-    std::vector<llama_token> toks(n);
-    if (llama_tokenize(h->vocab, prompt.c_str(), (int32_t) prompt.size(), toks.data(), n, true, true) < 0) return nullptr;
+    std::vector<llama_token> toks;
+    if (!tokenize(h, prompt, toks)) return nullptr;
+    int n = (int) toks.size();
     if (n + maxTokens > h->n_ctx) return nullptr;
 
-    llama_kv_self_clear(h->ctx);
     llama_sampler_reset(h->smpl);
 
     long long t0 = now_ms();
-    for (int i = 0; i < n; i += h->n_batch) {
-        if (h->abort.load()) return nullptr;
-        int cnt = std::min(h->n_batch, n - i);
-        llama_batch batch = llama_batch_get_one(toks.data() + i, cnt);
-        if (llama_decode(h->ctx, batch) != 0) return nullptr;
-    }
+    int fresh = eval_tokens(h, toks);
+    if (fresh < 0) return nullptr;
 
     long long t1 = now_ms();
     std::string out;
@@ -164,7 +198,7 @@ Java_com_kakario_videoplayer_ai_LlamaNative_generate(
         gen++;
         if (llama_decode(h->ctx, batch) != 0) break;
     }
-    h->st_prompt = n;
+    h->st_prompt = fresh;
     h->st_gen = gen;
     h->st_prompt_ms = t1 - t0;
     h->st_gen_ms = now_ms() - t1;
@@ -180,4 +214,23 @@ Java_com_kakario_videoplayer_ai_LlamaNative_lastStats(JNIEnv *env, jclass, jlong
     jlong v[5] = {h->st_prompt, h->st_gen, h->st_prompt_ms, h->st_gen_ms, h->threads};
     env->SetLongArrayRegion(arr, 0, 5, v);
     return arr;
+}
+
+/**
+ * 예열: 번역 지시문(시스템 부분)을 미리 넣어 둔다.
+ * 처음 한 번은 폰이 계산 준비를 하느라 유난히 느린데, 그걸 모델 열 때 끝내 두고
+ * 지시문도 캐시에 남아 첫 번역부터 빨라진다. 걸린 ms, 실패면 -1.
+ */
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_kakario_videoplayer_ai_LlamaNative_warmup(JNIEnv *env, jclass, jlong ptr, jbyteArray jsys) {
+    auto *h = reinterpret_cast<LlmHandle *>(ptr);
+    if (!h) return -1;
+    h->abort.store(false);
+    std::string sys = jstr(env, jsys);
+    std::string text = "<|im_start|>system\n" + sys + "<|im_end|>\n<|im_start|>user\n";
+    std::vector<llama_token> toks;
+    if (!tokenize(h, text, toks)) return -1;
+    long long t0 = now_ms();
+    if (eval_tokens(h, toks) < 0) return -1;
+    return now_ms() - t0;
 }
