@@ -287,61 +287,41 @@ class AiSubtitleSession(
 
     // ───────────────────────────── 번역
 
+    /** 번역 상태 (자막 메뉴에서 확인용). */
+    var translateInfo by mutableStateOf<String?>(null)
+        private set
+    @Volatile private var translateBroken = false
+
     private fun translate(segs: List<AiCue>): List<AiCue> {
-        if (llmModel == null || !LlamaNative.available) return segs
+        if (llmModel == null) return segs
+        if (!LlamaNative.available) {
+            translateInfo = "번역 엔진을 불러오지 못했어요"
+            return segs
+        }
+        if (translateBroken) return segs
         if (llmHandle == 0L) {
             status = "번역 모델 준비 중…"
             val threads = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
-            llmHandle = LlamaNative.init(llmModel.path, 4096, threads)
-            if (llmHandle == 0L) return segs
+            val t0 = System.currentTimeMillis()
+            llmHandle = LlamaNative.init(llmModel.path, 2048, threads)
+            if (llmHandle == 0L) {
+                translateBroken = true
+                translateInfo = "번역 모델을 열지 못했어요 (파일이 깨졌거나 메모리 부족) — 원어 자막만 보여요"
+                notice = "번역 모델을 열지 못했어요 — 원어 자막만 보여요"
+                return segs
+            }
+            translateInfo = "번역 모델 준비 완료 (${(System.currentTimeMillis() - t0) / 1000}초)"
         }
         val out = ArrayList<AiCue>(segs.size)
-        segs.chunked(10).forEach { group ->
-            val context = (cues.filter { it.startMs < group.first().startMs }.takeLast(4).map { it.text })
-            val ko = translateLines(group.map { it.text }, context)
-            group.forEachIndexed { i, c -> out += c.copy(ko = ko.getOrNull(i)) }
+        segs.chunked(8).forEach { group ->
+            val context = cues.filter { it.startMs < group.first().startMs }.takeLast(3).map { it.text }
+            val t0 = System.currentTimeMillis()
+            val r = AiTranslator.translate(llmHandle, group.map { it.text }, context, language)
+            translateInfo = "${r.info} · ${group.size}줄 ${(System.currentTimeMillis() - t0) / 1000}초"
+            group.forEachIndexed { i, c -> out += c.copy(ko = r.ko.getOrNull(i)) }
         }
+        if (out.none { it.ko != null }) notice = "번역이 안 됐어요: $translateInfo"
         return out
-    }
-
-    private fun translateLines(lines: List<String>, context: List<String>): List<String?> {
-        val langName = when (language) {
-            "ja" -> "일본어"
-            "zh" -> "중국어"
-            "en" -> "영어"
-            else -> "외국어"
-        }
-        val sys = "너는 영상 자막 전문 번역가야. 번호가 붙은 각 줄을 자연스러운 한국어 구어체 자막으로 번역해. " +
-            "번호와 줄 수를 그대로 지키고, 번역한 줄만 출력해. 설명이나 원문은 쓰지 마."
-        val user = buildString {
-            if (context.isNotEmpty()) {
-                append("앞 대사 (참고만 하고 번역하지 마):\n")
-                context.forEach { append(it).append('\n') }
-                append('\n')
-            }
-            append("번역할 $langName 대사:\n")
-            lines.forEachIndexed { i, l -> append(i + 1).append(". ").append(l).append('\n') }
-            append("/no_think")
-        }
-        val maxTokens = (lines.sumOf { it.length } * 3 + 64).coerceIn(128, 1200)
-        val raw = LlamaNative.generate(
-            llmHandle,
-            sys.toByteArray(),
-            user.toByteArray(),
-            "<think>\n\n</think>\n\n".toByteArray(), // 생각 모드 끄기 (바로 답)
-            maxTokens,
-        ) ?: return List(lines.size) { null }
-        val text = String(raw, Charsets.UTF_8).replace(Regex("(?s)<think>.*?</think>"), "")
-        val map = HashMap<Int, String>()
-        val re = Regex("""^\s*(\d+)\s*[.)：:]\s*(.+)$""")
-        text.lines().forEach { l ->
-            re.find(l)?.let { m ->
-                val n = m.groupValues[1].toIntOrNull()
-                if (n != null) map[n] = m.groupValues[2].trim()
-            }
-        }
-        if (map.isEmpty() && lines.size == 1 && text.isNotBlank()) return listOf(text.trim())
-        return List(lines.size) { map[it + 1] }
     }
 
     // ───────────────────────────── 기타

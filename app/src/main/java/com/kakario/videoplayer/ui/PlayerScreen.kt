@@ -991,6 +991,7 @@ fun PlayerScreen(
                                 SheetOption("끄기", selected = !aiOn) { aiOn = false }
                                 if (aiOn) {
                                     aiSession?.language?.let { SheetNote("감지한 언어: ${langLabel(it)}") }
+                                    aiSession?.translateInfo?.let { SheetNote("번역 상태: $it") }
                                     AiShowMode.entries.forEach { m ->
                                         SheetOption(m.label, selected = aiShow == m) {
                                             aiShow = m

@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.kakario.videoplayer.ai.AiModel
 import com.kakario.videoplayer.ai.AiLibs
+import com.kakario.videoplayer.ai.AiTranslator
 import com.kakario.videoplayer.ai.AiShowMode
 import com.kakario.videoplayer.ai.AiSubtitleSession
 import com.kakario.videoplayer.ai.LlamaNative
@@ -70,6 +71,8 @@ fun AiSubtitleSettings() {
     var dlError by remember { mutableStateOf<String?>(null) }
     var fastCpu by remember { mutableStateOf(store.aiFastCpu) }
     var liveFast by remember { mutableStateOf(store.aiLiveFast) }
+    var testing by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<String?>(null) }
     // 받기: 와이파이면 바로, 모바일 데이터면 용량 알려주고 물어보기
     fun startDownload(m: AiModel) {
         if (models.onMobileData()) mobileAsk = m else dlError = models.download(m)
@@ -180,6 +183,59 @@ fun AiSubtitleSettings() {
                     onCancel = { models.cancel(AiModel.QWEN3_4B); tick++ },
                     onDelete = { deleteAsk = AiModel.QWEN3_4B },
                 )
+            }
+
+            // 번역 시험: 영상 없이 번역 모델만 돌려서 결과와 걸린 시간을 보여준다
+            if (translate && models.isReady(AiModel.QWEN3_4B)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(
+                        enabled = !testing,
+                        onClick = {
+                            testing = true
+                            testResult = "번역 모델 여는 중…"
+                            Thread {
+                                val sb = StringBuilder()
+                                try {
+                                    if (!LlamaNative.available) {
+                                        sb.append("번역 엔진을 불러오지 못했어요")
+                                    } else {
+                                        val t0 = System.currentTimeMillis()
+                                        val threads = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
+                                        val h = LlamaNative.init(models.file(AiModel.QWEN3_4B).path, 2048, threads)
+                                        val t1 = System.currentTimeMillis()
+                                        if (h == 0L) {
+                                            sb.append("번역 모델을 열지 못했어요 (${(t1 - t0) / 1000}초)")
+                                        } else {
+                                            testResult = "번역 중… (모델 여는 데 ${(t1 - t0) / 1000}초)"
+                                            val lines = listOf("Hey, are you coming to the party tonight?", "I don't know, I'm really tired.")
+                                            val r = AiTranslator.translate(h, lines, emptyList(), "en")
+                                            val t2 = System.currentTimeMillis()
+                                            LlamaNative.free(h)
+                                            sb.append("모델 열기 ${(t1 - t0) / 1000}초 · 번역 ${(t2 - t1) / 1000}초\n")
+                                            sb.append("상태: ${r.info}\n")
+                                            lines.forEachIndexed { i, l -> sb.append("• $l\n  → ${r.ko.getOrNull(i) ?: "(번역 없음)"}\n") }
+                                        }
+                                    }
+                                } catch (e: Throwable) {
+                                    sb.append("오류: ${e.message ?: e.javaClass.simpleName}")
+                                }
+                                testResult = sb.toString().trim()
+                                testing = false
+                            }.start()
+                        },
+                    ) { Text(if (testing) "시험 중…" else "번역 시험해 보기") }
+                }
+                testResult?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                    )
+                }
             }
 
             SubHeader("③ 폰 성능 기능 더 쓰기")
