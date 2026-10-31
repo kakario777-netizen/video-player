@@ -130,6 +130,15 @@ private const val TAB_FTP = 1
 private const val TAB_LOCAL = 2
 
 class MainActivity : ComponentActivity() {
+    /** 폰 메모리가 부족해지면 들고 있던 번역 모델을 내려놓는다. */
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            com.kakario.videoplayer.ai.LlmHolder.releaseNow()
+        }
+    }
+
     /** 작은 창(PIP)으로 보는 중인지 — 재생 화면이 버튼을 숨기는 데 쓴다. */
     private var inPip by mutableStateOf(false)
     /** 설정의 '홈 버튼 누르면 작은 창으로 계속 보기'. */

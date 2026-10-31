@@ -261,8 +261,7 @@ class AiSubtitleSession(
                 runCatching { chunker?.close() }
                 if (whisperHandle != 0L) WhisperNative.free(whisperHandle)
                 whisperHandle = 0
-                if (llmHandle != 0L) LlamaNative.free(llmHandle)
-                llmHandle = 0
+                llmHandle = 0 // 번역 모델은 LlmHolder가 들고 있다가 안 쓰면 알아서 내려놓음
                 worker.shutdown()
             }
         }
@@ -299,28 +298,29 @@ class AiSubtitleSession(
             return segs
         }
         if (translateBroken) return segs
-        if (llmHandle == 0L) {
-            status = "번역 모델 준비 중…"
-            val threads = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
-            val t0 = System.currentTimeMillis()
-            llmHandle = LlamaNative.init(llmModel.path, 2048, threads)
-            if (llmHandle == 0L) {
+        val out = ArrayList<AiCue>(segs.size)
+        LlmHolder.use(llmModel.path, onOpening = { status = "번역 모델 준비 중…" }) { h ->
+            if (h == 0L) {
                 translateBroken = true
                 translateInfo = "번역 모델을 열지 못했어요 (파일이 깨졌거나 메모리 부족) — 원어 자막만 보여요"
                 notice = "번역 모델을 열지 못했어요 — 원어 자막만 보여요"
-                return segs
+                out += segs
+                return@use
             }
-            AiTranslator.warm(llmHandle)
-            translateInfo = "번역 모델 준비 완료 (${(System.currentTimeMillis() - t0) / 1000}초)"
+            llmHandle = h
+            try {
+                segs.chunked(8).forEach { group ->
+                    val context = cues.filter { it.startMs < group.first().startMs }.takeLast(3).map { it.text }
+                    val t0 = System.currentTimeMillis()
+                    val r = AiTranslator.translate(h, group.map { it.text }, context, language)
+                    translateInfo = "${r.info} · ${group.size}줄 ${(System.currentTimeMillis() - t0) / 1000}초"
+                    group.forEachIndexed { i, c -> out += c.copy(ko = r.ko.getOrNull(i)) }
+                }
+            } finally {
+                llmHandle = 0
+            }
         }
-        val out = ArrayList<AiCue>(segs.size)
-        segs.chunked(8).forEach { group ->
-            val context = cues.filter { it.startMs < group.first().startMs }.takeLast(3).map { it.text }
-            val t0 = System.currentTimeMillis()
-            val r = AiTranslator.translate(llmHandle, group.map { it.text }, context, language)
-            translateInfo = "${r.info} · ${group.size}줄 ${(System.currentTimeMillis() - t0) / 1000}초"
-            group.forEachIndexed { i, c -> out += c.copy(ko = r.ko.getOrNull(i)) }
-        }
+        if (translateBroken) return segs
         if (out.none { it.ko != null }) notice = "번역이 안 됐어요: $translateInfo"
         return out
     }
