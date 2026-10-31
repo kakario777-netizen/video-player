@@ -93,8 +93,56 @@ class AiSubtitleSession(
     @Volatile private var translateMs = 8_000L
     private val translateWanted get() = llmModel != null && language != "ko"
 
-    /** 완성된 구간 번호들 (재생 막대에 파랗게 칠하기용). */
-    fun doneChunks(): Set<Int> = HashSet(done)
+    /** 음성 인식까지 끝난 구간 (번역 전이어도). */
+    private val heard: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** 재생 막대 칠하기용: 번역까지 끝남 / 음성 인식만 됨 / 대사 없음. */
+    data class ChunkMap(val translated: Set<Int>, val heard: Set<Int>, val silent: Set<Int>) {
+        companion object { val EMPTY = ChunkMap(emptySet(), emptySet(), emptySet()) }
+    }
+
+    fun chunkMap(): ChunkMap {
+        val byChunk = cues.groupBy { (it.startMs / CHUNK_MS).toInt() }
+        val tr = HashSet<Int>()
+        val hd = HashSet<Int>()
+        val si = HashSet<Int>()
+        for (i in done) {
+            val list = byChunk[i]
+            when {
+                list.isNullOrEmpty() -> si += i
+                !translateWanted || list.all { it.ko != null } -> tr += i
+                else -> hd += i
+            }
+        }
+        for (i in heard) if (i !in done && !byChunk[i].isNullOrEmpty()) hd += i
+        return ChunkMap(tr, hd, si)
+    }
+
+    /** 번역까지 끝난 비율 (대사 없는 구간 포함) — 오른쪽 위 원형 표시. */
+    fun translatedFraction(map: ChunkMap): Float {
+        if (durationMs <= 0) return 0f
+        val total = ((durationMs - 1) / CHUNK_MS + 1).toInt()
+        return ((map.translated.size + map.silent.size).toFloat() / total).coerceIn(0f, 1f)
+    }
+    fun heardFraction(map: ChunkMap): Float {
+        if (durationMs <= 0) return 0f
+        val total = ((durationMs - 1) / CHUNK_MS + 1).toInt()
+        return ((map.translated.size + map.silent.size + map.heard.size).toFloat() / total).coerceIn(0f, 1f)
+    }
+
+    /** 쓰는 음성 모델 이름 (small / turbo / large). */
+    val whisperName: String = when {
+        whisperModel.name.contains("small") -> "small"
+        whisperModel.name.contains("turbo") -> "turbo"
+        else -> "large"
+    }
+
+    /** 최근 구간별 걸린 시간 (자막 메뉴에서 확인). 최신이 앞. */
+    var timings by mutableStateOf<List<String>>(emptyList())
+        private set
+    private fun addTiming(line: String) {
+        timings = (listOf(line) + timings).take(6)
+    }
     val chunkMs get() = CHUNK_MS
 
     /** 지금 하는 덩어리가 끝날 때까지 남은 ms (대략, 넉넉히). */
@@ -114,11 +162,9 @@ class AiSubtitleSession(
      */
     fun topLabel(now: Long): String? {
         if (korean || failed != null) return null
-        val word = if (translateWanted) "번역" else "AI 자막"
         LlmHolder.warmRemainSec(now)?.let { return "번역 엔진 준비 중 · 약 ${it}초 남음" }
-        val pct = (progress * 100).toInt()
         if (progress >= 1f) return null
-        val head = "$word $pct%"
+        val head = whisperName
         return when (stage) {
             "소리 받는 중", "음성 인식 중" -> {
                 if (translateWanted) {
@@ -261,8 +307,11 @@ class AiSubtitleSession(
                     status = if (startMs <= ph + 2_000) "AI 자막 만드는 중…"
                     else "AI 자막 ${mmss(startMs)}부터 준비 중"
                     stage("소리 받는 중")
+                    val aT0 = System.currentTimeMillis()
                     val pcm = chunker.read(startMs, CHUNK_MS)
+                    val audioTook = System.currentTimeMillis() - aT0
                     if (pcm == null || rms(pcm) < SILENCE) {
+                        addTiming("${mmss(startMs)} · 소리 ${sec1(audioTook)} · 대사 없음")
                         done += next
                         saveCache()
                         continue
@@ -270,7 +319,8 @@ class AiSubtitleSession(
                     stage("음성 인식 중")
                     val wT0 = System.currentTimeMillis()
                     val raw = WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", threads, false)
-                    whisperMs = (whisperMs * 0.6 + (System.currentTimeMillis() - wT0) * 0.4).toLong()
+                    val whisperTook = System.currentTimeMillis() - wT0
+                    whisperMs = (whisperMs * 0.6 + whisperTook * 0.4).toLong()
                     stage(null)
                     if (!isActive) return@launch
                     if (raw == null) {
@@ -314,6 +364,7 @@ class AiSubtitleSession(
                         done += next
                         continue
                     }
+                    heard += next
                     // 인식 결과(원어)를 먼저 바로 띄우고, 번역은 끝나는 대로 바꿔 끼운다
                     if (segs.isNotEmpty()) {
                         withContext(Dispatchers.Main) {
@@ -321,6 +372,7 @@ class AiSubtitleSession(
                                 .sortedBy { it.startMs }
                         }
                     }
+                    var translateTook = -1L
                     val translated = if (llmModel != null && language != null && language != "ko" && segs.isNotEmpty()) {
                         stage("번역 중")
                         val tT0 = System.currentTimeMillis()
@@ -328,7 +380,8 @@ class AiSubtitleSession(
                         translate(segs).also {
                             stage(null)
                             // 예열 시간이 섞인 첫 번역은 빼고 평균
-                            if (wasOpen) translateMs = (translateMs * 0.6 + (System.currentTimeMillis() - tT0) * 0.4).toLong()
+                            translateTook = System.currentTimeMillis() - tT0
+                            if (wasOpen) translateMs = (translateMs * 0.6 + translateTook * 0.4).toLong()
                         }
                     } else segs
                     if (!isActive) return@launch
@@ -337,6 +390,11 @@ class AiSubtitleSession(
                             .sortedBy { it.startMs }
                     }
                     done += next
+                    addTiming(
+                        "${mmss(startMs)} · 소리 ${sec1(audioTook)} · 인식 ${sec1(whisperTook)}" +
+                            (if (translateTook >= 0) " · 번역 ${sec1(translateTook)} (${segs.size}줄)" else "") +
+                            " · 합계 ${sec1(System.currentTimeMillis() - chunkStartedAt)}"
+                    )
                     // 한 덩어리 처리 시간(평균) 갱신 — 다음에 얼마나 앞을 고를지 정하는 데 씀
                     val took = System.currentTimeMillis() - chunkStartedAt
                     procMs = (procMs * 0.6 + took * 0.4).toLong().coerceIn(5_000, 180_000)
@@ -417,6 +475,8 @@ class AiSubtitleSession(
     }
 
     // ───────────────────────────── 기타
+
+    private fun sec1(ms: Long) = String.format("%.1f초", ms / 1000.0)
 
     private fun mmss(ms: Long): String {
         val t = ms / 1000

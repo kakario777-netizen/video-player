@@ -2,6 +2,12 @@ package com.kakario.videoplayer.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +55,8 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Switch
 import kotlin.math.roundToInt
 
+private val SETTING_TOPICS = listOf("화면 테마", "목록 · 썸네일", "재생", "자막")
+
 @Composable
 fun SettingsScreen(
     themeMode: ThemeMode,
@@ -86,313 +94,329 @@ fun SettingsScreen(
             .getOrNull() ?: "?"
     }
 
-    Column(Modifier.fillMaxSize()) {
-        BrowserHeader(title = "설정", subtitle = null, onBack = onClose)
+    var page by remember { mutableStateOf<String?>(null) }
 
+    Column(Modifier.fillMaxSize()) {
+        BrowserHeader(title = page ?: "설정", subtitle = null, onBack = { if (page != null) page = null else onClose() })
+        BackHandler(enabled = page != null) { page = null }
+
+        AnimatedContent(
+            targetState = page,
+            transitionSpec = {
+                // 주제로 들어갈 때는 오른쪽에서, 나올 때는 왼쪽에서 밀려 들어옴
+                val into = targetState != null
+                slideInHorizontally { w -> if (into) w else -w } togetherWith
+                    slideOutHorizontally { w -> if (into) -w else w }
+            },
+            label = "settings-page",
+        ) { p ->
         Column(
             Modifier
                 .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .verticalScroll(rememberScrollState())
         ) {
-            // ── 화면 테마
-            SectionTitle("화면 테마")
-            ThemeMode.entries.forEach { mode ->
-                RadioRow(mode.label, selected = mode == themeMode) { onThemeChange(mode) }
-            }
-
-            Divider()
-
-            // ── 목록 크기
-            // ── 썸네일 비율
-            SectionTitle("썸네일 비율")
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                ThumbRatio.entries.forEach { r ->
-                    val on = r == thumbRatio
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .border(
-                                if (on) 2.dp else 1.dp,
-                                if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                RoundedCornerShape(10.dp),
-                            )
-                            .selectable(selected = on, onClick = { onThumbRatioChange(r) })
-                            .padding(10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Box(
-                            Modifier
-                                .height(40.dp)
-                                .aspectRatio(r.ratio)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant)
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            r.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-                        )
-                    }
-                }
-            }
-
-            Divider()
-
-            SectionTitle("목록 썸네일 크기")
-            var sliderValue by remember { mutableFloatStateOf(gridColumns.toFloat()) }
-            val cols = sliderValue.roundToInt()
-            Text(
-                "한 줄에 영상 ${cols}개" + when (cols) {
-                    1 -> " (가장 크게)"
-                    4 -> " (가장 작게)"
-                    else -> ""
-                },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-            )
-            Row(
-                Modifier.padding(horizontal = 24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("크게", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Slider(
-                    value = sliderValue,
-                    onValueChange = { sliderValue = it },
-                    onValueChangeFinished = { onGridColumnsChange(sliderValue.roundToInt()) },
-                    valueRange = 1f..4f,
-                    steps = 2,
-                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
-                )
-                Text("작게", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            GridPreview(cols, thumbRatio.ratio)
-
-            Divider()
-
-            // ── 재생
-            SectionTitle("재생")
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .toggleable(value = resumePlayback, onValueChange = onResumeChange)
-                    .padding(horizontal = 24.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("이어보기", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                    Text(
-                        "다시 열면 보던 위치부터 재생 (화면에 '처음부터' 버튼이 잠깐 떠요)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Switch(checked = resumePlayback, onCheckedChange = null)
-            }
-            Text(
-                "두 번 탭·버튼으로 건너뛰는 시간",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-            )
-            Row(Modifier.padding(horizontal = 12.dp)) {
-                listOf(5, 10, 15, 30).forEach { sec ->
-                    Row(
-                        Modifier
-                            .selectable(selected = sec == skipSeconds, onClick = { onSkipSecondsChange(sec) })
-                            .padding(end = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = sec == skipSeconds, onClick = { onSkipSecondsChange(sec) })
-                        Text("${sec}초", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                    }
-                }
-            }
-
-            Divider()
-
-            // ── 자막
-            SectionTitle("자막 · 오프라인 AI 자동 자막")
-            AiSubtitleSettings()
-
-            Divider()
-
-            SectionTitle("자막 크기")
-            SubtitleSize.entries.forEach { size ->
-                RadioRow(size.label, selected = size == subtitleSize) { onSubtitleSizeChange(size) }
-            }
-            Text(
-                "다음에 영상을 열 때부터 적용돼요. 영상과 같은 이름의 .smi / .srt / .ass 자막은 자동으로 붙어요",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-            )
-
-            Divider()
-
-            // ── 다 봤을 때 / 작은 창
-            SectionTitle("영상이 끝났을 때")
-            AutoNext.entries.forEach { a ->
-                RadioRow(a.label, selected = a == autoNext) { onAutoNextChange(a) }
-            }
-            SettingSwitch(
-                title = "홈 버튼 누르면 작은 창으로 계속 보기",
-                subtitle = "재생 중에 홈으로 나가면 화면 구석의 작은 창(PIP)에서 이어서 재생돼요",
-                checked = pip,
-                onChange = onPipChange,
-            )
-            SettingSwitch(
-                title = "화면 잠금 버튼 사용",
-                subtitle = "켜면 재생 화면 위쪽에 🔒 버튼이 생겨요. 누르면 화면 터치가 잠겨요",
-                checked = lockButton,
-                onChange = onLockButtonChange,
-            )
-
-            Divider()
-
-            // ── 썸네일
-            SectionTitle("썸네일")
-            val thumbs = LocalVideoThumbs.current
-            var cacheBytes by remember { mutableLongStateOf(thumbs?.diskBytes() ?: 0L) }
-            var confirmClear by remember { mutableIntStateOf(0) }
-
-            // 썸네일 장면 위치: 처음 ~ 2분, 10초 단위
-            var thumbSlider by remember { mutableFloatStateOf(thumbSeconds / 10f) }
-            val sliderSec = thumbSlider.roundToInt() * 10
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "썸네일로 쓸 장면 위치",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    secondsLabel(sliderSec),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Row(
-                Modifier.padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                StepButton("−") {
-                    val v = (thumbSlider.roundToInt() - 1).coerceAtLeast(0)
-                    thumbSlider = v.toFloat()
-                    onThumbSecondsChange(v * 10)
-                }
-                Slider(
-                    value = thumbSlider,
-                    onValueChange = { thumbSlider = it },
-                    onValueChangeFinished = { onThumbSecondsChange(thumbSlider.roundToInt() * 10) },
-                    valueRange = 0f..12f,
-                    steps = 11, // 0, 10, 20 … 120초
-                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                )
-                StepButton("+") {
-                    val v = (thumbSlider.roundToInt() + 1).coerceAtMost(12)
-                    thumbSlider = v.toFloat()
-                    onThumbSecondsChange(v * 10)
-                }
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 32.dp)) {
-                Text("처음", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                Text("1분", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                Text("2분", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
-            }
-            Text(
-                "10초 단위로 정할 수 있어요. 이보다 짧은 영상은 가운데 장면을 써요. 바꾼 위치는 새로 만드는 썸네일부터 적용돼요",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-            )
-            TextButton(
-                onClick = { confirmClear = 1 },
-                enabled = cacheBytes > 0,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            ) { Text("기존 썸네일도 이 위치로 모두 다시 만들기") }
-            SettingSwitch(
-                title = "어두운 장면이면 조금 뒤 장면 찾기",
-                subtitle = "페이드·검은 화면이면 15초, 45초 뒤 장면을 자동으로 골라요. 끄면 정한 위치 그대로",
-                checked = thumbSkipDark,
-                onChange = onThumbSkipDarkChange,
-            )
-            SettingSwitch(
-                title = "FTP 영상도 썸네일 자동으로 만들기",
-                subtitle = "영상 전체가 아니라 필요한 부분만 조금 받아서 만들어요",
-                checked = ftpThumbs,
-                onChange = onFtpThumbsChange,
-            )
-            SettingSwitch(
-                title = "모바일 데이터(LTE·5G)에서도 만들기",
-                subtitle = "끄면 와이파이일 때만 FTP 썸네일을 만들어요",
-                checked = thumbsOnMobile,
-                onChange = onThumbsOnMobileChange,
-                enabled = ftpThumbs,
-            )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("저장된 썸네일", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
-                    Text(formatBytes(cacheBytes), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                OutlinedButton(onClick = { confirmClear = 1 }, enabled = cacheBytes > 0) { Text("지우기") }
-            }
-            if (confirmClear > 0) {
-                AlertDialog(
-                    onDismissRequest = { confirmClear = 0 },
-                    title = { Text(if (confirmClear == 1) "썸네일 지우기" else "정말 지울까요?") },
-                    text = {
-                        Text(
-                            if (confirmClear == 1) "저장된 썸네일 ${formatBytes(cacheBytes)}를 지울까요?\n(영상 파일은 지워지지 않아요)"
-                            else "FTP 목록은 썸네일을 다시 받아오느라 처음 열 때 느려질 수 있어요."
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            if (confirmClear == 1) {
-                                confirmClear = 2
-                            } else {
-                                thumbs?.clear()
-                                cacheBytes = thumbs?.diskBytes() ?: 0L
-                                confirmClear = 0
-                            }
-                        }) {
-                            Text(
-                                if (confirmClear == 1) "다음" else "네, 지울게요",
-                                color = if (confirmClear == 2) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    },
-                    dismissButton = { TextButton(onClick = { confirmClear = 0 }) { Text("취소") } },
-                )
-            }
-
-            Divider()
-
-            SectionTitle("앱 정보")
+          if (p == null) {
+            // 처음 화면: 주제만 (터치하면 그 주제 설정으로)
+            SETTING_TOPICS.forEach { t -> TopicRow(t) { page = t } }
             Text(
                 "비디오플레이어 버전 $version",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
             )
+          } else {
+            when (p) {
+                "화면 테마" -> {
+                ThemeMode.entries.forEach { mode ->
+                    RadioRow(mode.label, selected = mode == themeMode) { onThemeChange(mode) }
+                }
+
+                }
+                "목록 · 썸네일" -> {
+
+                SectionTitle("썸네일 비율")
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    ThumbRatio.entries.forEach { r ->
+                        val on = r == thumbRatio
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(
+                                    if (on) 2.dp else 1.dp,
+                                    if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    RoundedCornerShape(10.dp),
+                                )
+                                .selectable(selected = on, onClick = { onThumbRatioChange(r) })
+                                .padding(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(
+                                Modifier
+                                    .height(40.dp)
+                                    .aspectRatio(r.ratio)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (on) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant)
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                r.label,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                    }
+                }
+
+                    Divider()
+
+                SectionTitle("목록 썸네일 크기")
+                var sliderValue by remember { mutableFloatStateOf(gridColumns.toFloat()) }
+                val cols = sliderValue.roundToInt()
+                Text(
+                    "한 줄에 영상 ${cols}개" + when (cols) {
+                        1 -> " (가장 크게)"
+                        4 -> " (가장 작게)"
+                        else -> ""
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                )
+                Row(
+                    Modifier.padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("크게", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(
+                        value = sliderValue,
+                        onValueChange = { sliderValue = it },
+                        onValueChangeFinished = { onGridColumnsChange(sliderValue.roundToInt()) },
+                        valueRange = 1f..4f,
+                        steps = 2,
+                        modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                    )
+                    Text("작게", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                GridPreview(cols, thumbRatio.ratio)
+
+                    Divider()
+
+                SectionTitle("썸네일")
+                val thumbs = LocalVideoThumbs.current
+                var cacheBytes by remember { mutableLongStateOf(thumbs?.diskBytes() ?: 0L) }
+                var confirmClear by remember { mutableIntStateOf(0) }
+
+                // 썸네일 장면 위치: 처음 ~ 2분, 10초 단위
+                var thumbSlider by remember { mutableFloatStateOf(thumbSeconds / 10f) }
+                val sliderSec = thumbSlider.roundToInt() * 10
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "썸네일로 쓸 장면 위치",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        secondsLabel(sliderSec),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Row(
+                    Modifier.padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    StepButton("−") {
+                        val v = (thumbSlider.roundToInt() - 1).coerceAtLeast(0)
+                        thumbSlider = v.toFloat()
+                        onThumbSecondsChange(v * 10)
+                    }
+                    Slider(
+                        value = thumbSlider,
+                        onValueChange = { thumbSlider = it },
+                        onValueChangeFinished = { onThumbSecondsChange(thumbSlider.roundToInt() * 10) },
+                        valueRange = 0f..12f,
+                        steps = 11, // 0, 10, 20 … 120초
+                        modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                    )
+                    StepButton("+") {
+                        val v = (thumbSlider.roundToInt() + 1).coerceAtMost(12)
+                        thumbSlider = v.toFloat()
+                        onThumbSecondsChange(v * 10)
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 32.dp)) {
+                    Text("처음", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text("1분", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                    Text("2분", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+                }
+                Text(
+                    "10초 단위로 정할 수 있어요. 이보다 짧은 영상은 가운데 장면을 써요. 바꾼 위치는 새로 만드는 썸네일부터 적용돼요",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                )
+                TextButton(
+                    onClick = { confirmClear = 1 },
+                    enabled = cacheBytes > 0,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                ) { Text("기존 썸네일도 이 위치로 모두 다시 만들기") }
+                SettingSwitch(
+                    title = "어두운 장면이면 조금 뒤 장면 찾기",
+                    subtitle = "페이드·검은 화면이면 15초, 45초 뒤 장면을 자동으로 골라요. 끄면 정한 위치 그대로",
+                    checked = thumbSkipDark,
+                    onChange = onThumbSkipDarkChange,
+                )
+                SettingSwitch(
+                    title = "FTP 영상도 썸네일 자동으로 만들기",
+                    subtitle = "영상 전체가 아니라 필요한 부분만 조금 받아서 만들어요",
+                    checked = ftpThumbs,
+                    onChange = onFtpThumbsChange,
+                )
+                SettingSwitch(
+                    title = "모바일 데이터(LTE·5G)에서도 만들기",
+                    subtitle = "끄면 와이파이일 때만 FTP 썸네일을 만들어요",
+                    checked = thumbsOnMobile,
+                    onChange = onThumbsOnMobileChange,
+                    enabled = ftpThumbs,
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("저장된 썸네일", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                        Text(formatBytes(cacheBytes), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    OutlinedButton(onClick = { confirmClear = 1 }, enabled = cacheBytes > 0) { Text("지우기") }
+                }
+                if (confirmClear > 0) {
+                    AlertDialog(
+                        onDismissRequest = { confirmClear = 0 },
+                        title = { Text(if (confirmClear == 1) "썸네일 지우기" else "정말 지울까요?") },
+                        text = {
+                            Text(
+                                if (confirmClear == 1) "저장된 썸네일 ${formatBytes(cacheBytes)}를 지울까요?\n(영상 파일은 지워지지 않아요)"
+                                else "FTP 목록은 썸네일을 다시 받아오느라 처음 열 때 느려질 수 있어요."
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                if (confirmClear == 1) {
+                                    confirmClear = 2
+                                } else {
+                                    thumbs?.clear()
+                                    cacheBytes = thumbs?.diskBytes() ?: 0L
+                                    confirmClear = 0
+                                }
+                            }) {
+                                Text(
+                                    if (confirmClear == 1) "다음" else "네, 지울게요",
+                                    color = if (confirmClear == 2) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        },
+                        dismissButton = { TextButton(onClick = { confirmClear = 0 }) { Text("취소") } },
+                    )
+                }
+
+                }
+                "재생" -> {
+
+                SectionTitle("재생")
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .toggleable(value = resumePlayback, onValueChange = onResumeChange)
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("이어보기", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                        Text(
+                            "다시 열면 보던 위치부터 재생 (화면에 '처음부터' 버튼이 잠깐 떠요)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(checked = resumePlayback, onCheckedChange = null)
+                }
+                Text(
+                    "두 번 탭·버튼으로 건너뛰는 시간",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                )
+                Row(Modifier.padding(horizontal = 12.dp)) {
+                    listOf(5, 10, 15, 30).forEach { sec ->
+                        Row(
+                            Modifier
+                                .selectable(selected = sec == skipSeconds, onClick = { onSkipSecondsChange(sec) })
+                                .padding(end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = sec == skipSeconds, onClick = { onSkipSecondsChange(sec) })
+                            Text("${sec}초", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                        }
+                    }
+                }
+
+                    Divider()
+
+                SectionTitle("영상이 끝났을 때")
+                AutoNext.entries.forEach { a ->
+                    RadioRow(a.label, selected = a == autoNext) { onAutoNextChange(a) }
+                }
+                SettingSwitch(
+                    title = "홈 버튼 누르면 작은 창으로 계속 보기",
+                    subtitle = "재생 중에 홈으로 나가면 화면 구석의 작은 창(PIP)에서 이어서 재생돼요",
+                    checked = pip,
+                    onChange = onPipChange,
+                )
+                SettingSwitch(
+                    title = "화면 잠금 버튼 사용",
+                    subtitle = "켜면 재생 화면 위쪽에 🔒 버튼이 생겨요. 누르면 화면 터치가 잠겨요",
+                    checked = lockButton,
+                    onChange = onLockButtonChange,
+                )
+
+                }
+                "자막" -> {
+
+                SectionTitle("자막 크기")
+                SubtitleSize.entries.forEach { size ->
+                    RadioRow(size.label, selected = size == subtitleSize) { onSubtitleSizeChange(size) }
+                }
+                Text(
+                    "다음에 영상을 열 때부터 적용돼요. 영상과 같은 이름의 .smi / .srt / .ass 자막은 자동으로 붙어요",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                )
+
+                    Divider()
+
+                SectionTitle("자막 · 오프라인 AI 자동 자막")
+                AiSubtitleSettings()
+
+                }
+            }
+          }
             Spacer(Modifier.height(24.dp))
+        }
         }
     }
 }
@@ -487,4 +511,25 @@ private fun SettingSwitch(
         Spacer(Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
+}
+
+/** 설정 첫 화면의 주제 한 줄 (파란 글씨, 오른쪽 화살표). */
+@Composable
+private fun TopicRow(title: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
+        )
+        Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.surfaceVariant)
 }

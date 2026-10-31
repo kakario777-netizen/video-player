@@ -425,16 +425,16 @@ fun PlayerScreen(
     var aiShow by remember { mutableStateOf(AiShowMode.entries.firstOrNull { it.name == aiStore.aiShowMode } ?: AiShowMode.BOTH) }
     var aiSession by remember(key) { mutableStateOf<AiSubtitleSession?>(null) }
     // 번역까지 끝난 구간 (재생 막대 파란색) — 1초마다 갱신
-    var aiReadyChunks by remember(key) { mutableStateOf<Set<Int>>(emptySet()) }
+    var aiChunkMap by remember(key) { mutableStateOf(AiSubtitleSession.ChunkMap.EMPTY) }
     LaunchedEffect(aiSession) {
         val ai = aiSession
         if (ai == null) {
-            aiReadyChunks = emptySet()
+            aiChunkMap = AiSubtitleSession.ChunkMap.EMPTY
             return@LaunchedEffect
         }
         while (true) {
-            val d = ai.doneChunks()
-            if (d != aiReadyChunks) aiReadyChunks = d
+            val m = ai.chunkMap()
+            if (m != aiChunkMap) aiChunkMap = m
             delay(1000)
         }
     }
@@ -742,15 +742,36 @@ fun PlayerScreen(
                     horizontalAlignment = Alignment.End,
                 ) {
                     if (small != null) {
-                        Text(
-                            small,
-                            color = Color.White.copy(alpha = 0.75f),
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            modifier = Modifier
+                        Row(
+                            Modifier
                                 .background(Color(0x33000000), RoundedCornerShape(8.dp))
                                 .padding(horizontal = 8.dp, vertical = 3.dp),
-                        )
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // 원형(케이크) 진행: 파랑 = 번역 끝, 하늘색 = 음성 인식까지
+                            val tr = ai.translatedFraction(aiChunkMap)
+                            val hd = ai.heardFraction(aiChunkMap)
+                            if (!ai.korean && ai.failed == null && ai.notice == null) {
+                                androidx.compose.foundation.Canvas(Modifier.size(14.dp)) {
+                                    drawCircle(Color(0x55FFFFFF))
+                                    drawArc(Color(0xFF8FD3FF), -90f, 360f * hd, useCenter = true)
+                                    drawArc(Color(0xFF2F7BFF), -90f, 360f * tr, useCenter = true)
+                                }
+                                Spacer(Modifier.width(5.dp))
+                                Text(
+                                    "${(tr * 100).toInt()}% · ",
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                )
+                            }
+                            Text(
+                                small,
+                                color = Color.White.copy(alpha = 0.75f),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                            )
+                        }
                     }
                     if (pauseHint != null) {
                         Spacer(Modifier.height(4.dp))
@@ -982,7 +1003,7 @@ fun PlayerScreen(
                             SeekBar(
                                 timeMs = timeMs,
                                 lengthMs = lengthMs,
-                                readyChunks = aiReadyChunks,
+                                chunkMap = aiChunkMap,
                                 chunkMs = 30_000L,
                                 onSeek = { ms ->
                                     player.time = ms
@@ -1032,6 +1053,9 @@ fun PlayerScreen(
                                 if (aiOn) {
                                     aiSession?.language?.let { SheetNote("감지한 언어: ${langLabel(it)}") }
                                     aiSession?.translateInfo?.let { SheetNote("번역 상태: $it") }
+                                    aiSession?.let { SheetNote("음성 인식 모델: ${it.whisperName}") }
+                                    // 구간별 걸린 시간 (최근 것부터) — 어디가 느린지 확인용
+                                    aiSession?.timings?.forEach { SheetNote(it) }
                                     AiShowMode.entries.forEach { m ->
                                         SheetOption(m.label, selected = aiShow == m) {
                                             aiShow = m
@@ -1253,7 +1277,7 @@ private fun RoundButton(label: String, sizeDp: Int, onClick: () -> Unit) {
 private fun SeekBar(
     timeMs: Long,
     lengthMs: Long,
-    readyChunks: Set<Int>,
+    chunkMap: AiSubtitleSession.ChunkMap,
     chunkMs: Long,
     onSeek: (Long) -> Unit,
     onDragging: () -> Unit,
@@ -1272,25 +1296,29 @@ private fun SeekBar(
             textAlign = TextAlign.Center,
         )
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        // 번역(AI 자막)까지 다 된 구간을 막대 위에 파랗게 칠한다
-        if (readyChunks.isNotEmpty() && lengthMs > 0) {
+        // AI 자막 진행을 막대 위에 칠한다: 번역까지 끝남 = 파랑 굵게, 음성 인식만 = 하늘색 얇게, 대사 없음 = 회색 얇게
+        val m = chunkMap
+        if ((m.translated.isNotEmpty() || m.heard.isNotEmpty() || m.silent.isNotEmpty()) && lengthMs > 0) {
             androidx.compose.foundation.Canvas(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 10.dp)
-                    .height(4.dp)
+                    .height(8.dp)
             ) {
                 val total = ((lengthMs - 1) / chunkMs + 1).toInt()
-                for (i in readyChunks) {
-                    if (i < 0 || i >= total) continue
-                    val x0 = size.width * (i * chunkMs).toFloat() / lengthMs
-                    val x1 = size.width * minOf((i + 1) * chunkMs, lengthMs).toFloat() / lengthMs
-                    drawRect(
-                        Color(0xFF2F7BFF),
-                        topLeft = Offset(x0, 0f),
-                        size = androidx.compose.ui.geometry.Size(x1 - x0 + 0.5f, size.height),
-                    )
+                fun paint(set: Set<Int>, color: Color, thick: Float) {
+                    val h = size.height * thick
+                    val top = (size.height - h) / 2
+                    for (i in set) {
+                        if (i < 0 || i >= total) continue
+                        val x0 = size.width * (i * chunkMs).toFloat() / lengthMs
+                        val x1 = size.width * minOf((i + 1) * chunkMs, lengthMs).toFloat() / lengthMs
+                        drawRect(color, topLeft = Offset(x0, top), size = androidx.compose.ui.geometry.Size(x1 - x0 + 0.5f, h))
+                    }
                 }
+                paint(m.silent, Color(0x99B0B0B0), 0.3f)
+                paint(m.heard, Color(0xFF8FD3FF), 0.3f)
+                paint(m.translated, Color(0xFF2F7BFF), 1f)
             }
         }
         Slider(

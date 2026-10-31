@@ -63,6 +63,10 @@ object AiBatch {
     /** 영상 재생 중이면 true (MainActivity가 넣어줌). */
     val paused = MutableStateFlow(false)
 
+    /** 중지 누를 때마다 바뀜 — 예전 작업이 뒤늦게 상태를 다시 띄우지 못하게. */
+    @Volatile private var generation = 0
+    @Volatile private var stopping = false
+
     private var doneCount = 0
     private var skipCount = 0
 
@@ -80,6 +84,8 @@ object AiBatch {
         enqueue(context, Task.Folder(origin, path, name))
 
     fun stopAll() {
+        stopping = true
+        generation++
         synchronized(queue) { queue.clear() }
         session?.stop()
         worker?.cancel()
@@ -88,6 +94,7 @@ object AiBatch {
 
     private fun enqueue(context: Context, task: Task) {
         val app = context.applicationContext
+        stopping = false
         synchronized(queue) { queue.addLast(task) }
         if (worker?.isActive != true) {
             doneCount = 0
@@ -102,12 +109,13 @@ object AiBatch {
     private fun waiting() = synchronized(queue) { queue.size }
 
     private fun publish(current: String? = _status.value?.current, percent: Int = _status.value?.percent ?: 0) {
+        if (stopping) return
         _status.value = AiBatchStatus(current ?: "", percent, waiting(), doneCount, skipCount, paused.value)
     }
 
     private suspend fun run(app: Context) {
         try {
-            while (scope.isActive) {
+            while (!stopping) {
                 val task = synchronized(queue) { queue.removeFirstOrNull() } ?: break
                 when (task) {
                     is Task.One -> processVideo(app, task.origin, task.entry, folder = null, browser = null)
@@ -119,6 +127,7 @@ object AiBatch {
         } catch (_: Exception) {
         } finally {
             _status.value = null
+            stopping = false
         }
     }
 
@@ -136,7 +145,7 @@ object AiBatch {
             val videos = list.filter { it.isVideo }
             // 폴더 안 영상들을 대기줄 맨 앞에 차례로 (같은 연결 재사용을 위해 여기서 바로 처리)
             videos.forEachIndexed { i, v ->
-                if (!scope.isActive) return
+                if (stopping) return
                 processVideo(app, task.origin, v, folder = list, browser = browser, extraWaiting = videos.size - i - 1)
             }
         } finally {
@@ -206,11 +215,13 @@ object AiBatch {
                         },
                         batch = true,
                     )
+                    if (stopping) return
                     session = s
                     s.start(scope) { 0L }
-                    // 진행률 표시 + 영상 보기 시작하면 멈춤
+                    // 진행률 표시 + 영상 보기 시작하면 멈춤 (중지되면 같이 끝남)
+                    val gen = generation
                     val watcher = scope.launch {
-                        while (isActive) {
+                        while (isActive && !stopping && gen == generation) {
                             _status.value = AiBatchStatus(
                                 entry.name, (s.progress * 100).toInt(), waiting() + extraWaiting,
                                 doneCount, skipCount, paused.value,
@@ -222,9 +233,14 @@ object AiBatch {
                             delay(1000)
                         }
                     }
-                    s.join()
-                    watcher.cancel()
-                    session = null
+                    try {
+                        s.join()
+                    } finally {
+                        watcher.cancel()
+                        session = null
+                        if (stopping) s.stop()
+                    }
+                    if (stopping) return
                     when {
                         s.completed -> {
                             doneCount++
