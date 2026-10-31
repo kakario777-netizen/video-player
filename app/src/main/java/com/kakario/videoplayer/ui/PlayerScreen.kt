@@ -750,7 +750,7 @@ fun PlayerScreen(
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
                         ) {
                             stageLines.forEach { (label, value) ->
-                                val active = value.startsWith("진행") || value.startsWith("받는") || value.startsWith("엔진")
+                                val active = value.startsWith("진행") || value.startsWith("받는") || value.startsWith("엔진") || value.startsWith("영상 여는")
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         label,
@@ -763,7 +763,8 @@ fun PlayerScreen(
                                         value,
                                         color = if (active) Color(0xFF8FD3FF) else Color.White.copy(alpha = 0.6f),
                                         fontSize = 11.sp,
-                                        maxLines = 1,
+                                        maxLines = 2,
+                                        modifier = Modifier.widthIn(max = 260.dp),
                                     )
                                 }
                             }

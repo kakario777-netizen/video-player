@@ -29,6 +29,31 @@ object FtpStreamServer {
     private data class Target(val server: FtpServer, val path: String, val size: Long)
 
     private val targets = ConcurrentHashMap<String, Target>()
+
+    // ── 테스트용 접속 기록 (누가: "AI" = 자막용 FFmpeg, "재생" = VLC)
+    private class Stat {
+        var requests = 0
+        var fails = 0
+        var connectMsTotal = 0L
+        var lastConnectMs = 0L
+        var active = 0
+        var lastError: String? = null
+    }
+    private val stats = ConcurrentHashMap<String, Stat>()
+
+    /** 예) "요청 12 · 거절 1 · 접속 평균 1.4초(최근 0.9) · 동시 2" — 기록 없으면 null. */
+    fun statLine(who: String): String? {
+        val st = stats[who] ?: return null
+        synchronized(st) {
+            val ok = (st.requests - st.fails).coerceAtLeast(1)
+            val avg = st.connectMsTotal / ok
+            return buildString {
+                append("요청 ${st.requests} · 거절 ${st.fails} · 접속 평균 ${"%.1f".format(avg / 1000.0)}초")
+                append("(최근 ${"%.1f".format(st.lastConnectMs / 1000.0)}) · 동시 ${st.active}")
+                st.lastError?.let { append(" · 마지막 오류: ").append(it.take(30)) }
+            }
+        }
+    }
     private val workers = Executors.newCachedThreadPool()
     private var serverSocket: ServerSocket? = null
 
@@ -120,16 +145,37 @@ object FtpStreamServer {
                     return
                 }
 
+                // 누가 요청했는지 (VLC = 재생, FFmpeg(Lavf) = AI 자막)
+                val agent = headers["user-agent"].orEmpty()
+                val who = if (agent.contains("Lavf", true) || agent.contains("ffmpeg", true)) "AI" else "재생"
+                val st = stats.getOrPut(who) { Stat() }
+                synchronized(st) {
+                    st.requests++
+                    st.active++
+                }
+
                 // FTP를 먼저 열어보고, 실패하면 재생기에 오류를 알려준다
                 val client = FTPClient()
                 client.bufferSize = 256 * 1024
+                val c0 = System.currentTimeMillis()
                 val data: InputStream = try {
                     client.connectAndLogin(target.server)
                     if (start > 0) client.setRestartOffset(start)
-                    client.retrieveFileStream(target.path)
-                        ?: throw IOException("파일을 열 수 없어요 (응답 ${client.replyCode})")
+                    (client.retrieveFileStream(target.path)
+                        ?: throw IOException("파일 열기 실패 (응답 ${client.replyCode})")).also {
+                        val took = System.currentTimeMillis() - c0
+                        synchronized(st) {
+                            st.connectMsTotal += took
+                            st.lastConnectMs = took
+                        }
+                    }
                 } catch (e: Exception) {
                     runCatching { client.disconnect() }
+                    synchronized(st) {
+                        st.fails++
+                        st.active--
+                        st.lastError = e.message ?: e.javaClass.simpleName
+                    }
                     writeStatus(out, "502 Bad Gateway", 0)
                     return
                 }
@@ -151,6 +197,7 @@ object FtpStreamServer {
                     // 받는 도중에 끊으면 FTP 응답 순서가 꼬이므로 연결째 닫는다
                     runCatching { data.close() }
                     runCatching { client.disconnect() }
+                    synchronized(st) { st.active-- }
                 }
             }
         } catch (_: IOException) {

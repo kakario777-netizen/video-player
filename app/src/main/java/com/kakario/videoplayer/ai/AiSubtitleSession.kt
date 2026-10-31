@@ -1,5 +1,7 @@
 package com.kakario.videoplayer.ai
 
+import com.kakario.videoplayer.ftp.FtpStreamServer
+
 import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -155,11 +157,13 @@ class AiSubtitleSession(
         val el = ((now - stageSince) / 1000).coerceAtLeast(0)
         fun secs(ms: Long) = String.format("%.1f초", ms / 1000.0)
         val audio = when {
+            st == "영상 여는 중" -> "영상 여는 중 ${el}초"
             st == "소리 받는 중" -> "받는 중 ${el}초"
             curAudioMs >= 0 -> "완료 ${secs(curAudioMs)}"
             else -> "대기"
         }
         val whisper = when {
+            st == "음성 엔진 여는 중" -> "엔진 여는 중 ${el}초"
             st == "음성 인식 중" -> {
                 val left = ((whisperMs - (now - stageSince)) / 1000).coerceAtLeast(1)
                 "진행 중 ${el}초 · 약 ${left}초 남음"
@@ -178,6 +182,11 @@ class AiSubtitleSession(
                 else -> pct
             }
             lines += "한글 번역" to tr
+        }
+        // 테스트용: FTP 영상이면 중계 접속 기록 한 줄 더
+        if (isUrl) {
+            FtpStreamServer.statLine("AI")?.let { lines += "FTP (AI)" to it }
+            FtpStreamServer.statLine("재생")?.let { lines += "FTP (재생)" to it }
         }
         return lines
     }
@@ -300,14 +309,16 @@ class AiSubtitleSession(
                     return@launch
                 }
                 status = "AI 자막 엔진 준비 중…"
+                stage("음성 엔진 여는 중")
                 whisperHandle = WhisperNative.init(whisperModel.path)
                 if (whisperHandle == 0L) {
                     failed = "음성인식 모델을 열지 못했어요. 설정에서 다시 받아 주세요"
                     return@launch
                 }
                 status = "영상 소리 여는 중…"
+                stage("영상 여는 중")
                 chunker = try {
-                    AudioSource.open(source, isUrl)
+                    AudioSource.open(source, isUrl).also { stage(null) }
                 } catch (e: Exception) {
                     failed = "이 영상에서 소리를 꺼내지 못했어요"
                     return@launch
