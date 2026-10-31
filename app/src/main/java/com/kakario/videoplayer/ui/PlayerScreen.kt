@@ -436,7 +436,7 @@ fun PlayerScreen(
         if (!aiOn || !whisperReady) return@DisposableEffect onDispose { }
         val llm = if (aiStore.aiTranslate && aiModels.isReady(AiModel.QWEN3_4B)) aiModels.file(AiModel.QWEN3_4B) else null
         // 번역 모델을 뒤에서 미리 열고 예열 (여유 메모리 4GB 이상일 때만) → 첫 번역부터 바로
-        llm?.let { com.kakario.videoplayer.ai.LlmHolder.prewarm(context, it.path) }
+        if (llm != null) com.kakario.videoplayer.ai.LlmHolder.prewarmIfWanted(context, "VIDEO")
         val session = AiSubtitleSession(
             context, key,
             source = streamUrl ?: entry.path,
@@ -697,16 +697,20 @@ fun PlayerScreen(
                 }
             }
             // 작은 상태 표시: 오른쪽 위, 반투명, 이모티콘 없이
-            val notReady = timeMs >= ai.readyUntilMs - 500
+            // 1초마다 남은 시간 다시 계산 (일시정지 중에도)
+            var nowTick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    delay(1000)
+                    nowTick = System.currentTimeMillis()
+                }
+            }
+            val friendly = ai.friendlyLabel(timeMs, nowTick)
             val small = when {
                 ai.notice != null -> ai.notice
                 ai.korean -> null
                 ai.failed != null -> ai.failed
-                notReady && ai.status != null -> {
-                    // 지금 하는 일과 걸린 시간도 같이 (예: AI 자막 0:30부터 준비 중 · 음성 인식 12초)
-                    val st = ai.stage
-                    if (st != null) "${ai.status} · $st ${((System.currentTimeMillis() - ai.stageSince) / 1000)}초" else ai.status
-                }
+                friendly != null -> friendly
                 controlsVisible && ai.progress in 0.001f..0.999f -> "AI 자막 ${(ai.progress * 100).toInt()}%"
                 else -> null
             }

@@ -156,6 +156,11 @@ class MainActivity : ComponentActivity() {
         pipEnabled = settingsStore.pip
         // AI 엔진: 지원 폰이면 고성능판을 쓰도록 (엔진은 처음 쓸 때 불러온다)
         com.kakario.videoplayer.ai.AiLibs.preferFast = settingsStore.aiFastCpu
+        // 번역 엔진 예열 (설정이 '앱 켤 때'이고 여유 메모리 4GB 이상일 때만)
+        com.kakario.videoplayer.ai.LlmHolder.attach(applicationContext)
+        if (savedInstanceState == null) {
+            com.kakario.videoplayer.ai.LlmHolder.prewarmIfWanted(applicationContext, "APP")
+        }
 
         setContent {
             var themeMode by remember { mutableStateOf(settingsStore.themeMode) }
@@ -379,6 +384,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     containerColor = MaterialTheme.colorScheme.background,
                     topBar = {
+                      androidx.compose.foundation.layout.Column {
                         // 상태바(시간·아이콘) 바로 아래에 탭 + 오른쪽 끝 설정 버튼
                         Row(
                             Modifier
@@ -424,6 +430,28 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        // 번역 엔진 예열 중 안내 (끝나면 사라짐)
+                        val warmSince = com.kakario.videoplayer.ai.LlmHolder.warmingSince
+                        if (warmSince != 0L) {
+                            var now by remember { mutableStateOf(System.currentTimeMillis()) }
+                            LaunchedEffect(warmSince) {
+                                while (true) {
+                                    now = System.currentTimeMillis()
+                                    kotlinx.coroutines.delay(1000)
+                                }
+                            }
+                            val left = com.kakario.videoplayer.ai.LlmHolder.warmRemainSec(now) ?: 1
+                            Text(
+                                "번역 엔진 준비 중이에요 · 약 ${left}초 남음 (배터리를 조금 더 쓸 수 있어요)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.primaryContainer)
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
+                      }
                     },
                 ) { padding ->
                     Box(Modifier.padding(padding).fillMaxSize()) {

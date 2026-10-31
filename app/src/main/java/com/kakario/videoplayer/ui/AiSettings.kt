@@ -71,6 +71,7 @@ fun AiSubtitleSettings() {
     var dlError by remember { mutableStateOf<String?>(null) }
     var fastCpu by remember { mutableStateOf(store.aiFastCpu) }
     var liveFast by remember { mutableStateOf(store.aiLiveFast) }
+    var prewarm by remember { mutableStateOf(store.aiPrewarm) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
     // 받기: 와이파이면 바로, 모바일 데이터면 용량 알려주고 물어보기
@@ -183,6 +184,39 @@ fun AiSubtitleSettings() {
                     onCancel = { models.cancel(AiModel.QWEN3_4B); tick++ },
                     onDelete = { deleteAsk = AiModel.QWEN3_4B },
                 )
+            }
+
+            // 번역 엔진 미리 준비(예열) 시점
+            if (translate) {
+                Text(
+                    "번역 엔진 미리 준비(예열)",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 10.dp),
+                )
+                Text(
+                    "처음 한 번 30초쯤 준비가 필요해요. 미리 해 두면 영상에서 바로 번역돼요. " +
+                        "폰 여유 메모리가 4GB 이상일 때만 하고, 5분 안 쓰면 내려놓아요",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+                listOf("APP" to "앱 켤 때 (추천)", "VIDEO" to "영상 틀 때", "OFF" to "미리 안 함 (번역이 필요할 때 준비)").forEach { (k, label) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .selectable(selected = prewarm == k, onClick = {
+                                prewarm = k
+                                store.aiPrewarm = k
+                            })
+                            .padding(horizontal = 12.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = prewarm == k, onClick = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                    }
+                }
             }
 
             // 번역 시험: 영상 없이 번역 모델만 돌려서 결과와 걸린 시간을 보여준다

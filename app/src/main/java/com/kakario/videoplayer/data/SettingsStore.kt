@@ -180,6 +180,13 @@ class SettingsStore(context: Context) {
             prefs.edit().putString("ai_show", value).apply()
         }
 
+    /** 번역 엔진 예열 시점: APP(앱 켤 때) / VIDEO(영상 틀 때) / OFF(번역이 필요할 때 연다). */
+    var aiPrewarm: String
+        get() = prefs.getString("ai_prewarm", "APP") ?: "APP"
+        set(value) {
+            prefs.edit().putString("ai_prewarm", value).apply()
+        }
+
     /** 재생하면서 실시간으로 볼 때는 빠른 모델(small)을 쓸지 (받아 둔 경우). */
     var aiLiveFast: Boolean
         get() = prefs.getBoolean("ai_live_fast", true)

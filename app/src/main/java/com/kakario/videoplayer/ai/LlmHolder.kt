@@ -4,6 +4,9 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
 
 /**
  * 번역 모델(2.5GB)을 앱 안에서 하나만 열어 두고 같이 쓴다.
@@ -29,6 +32,28 @@ object LlmHolder {
 
     val isOpen: Boolean get() = handle != 0L
 
+    /** 예열(열기+준비) 시작 시각, 0이면 예열 중 아님 — 화면에 '번역 준비 중 (N초 남음)' 표시용. */
+    var warmingSince by mutableLongStateOf(0L)
+        private set
+    /** 예열에 걸릴 것으로 보는 시간 (지난번 실제 걸린 시간). */
+    @Volatile var expectedWarmMs = 35_000L
+        private set
+    private var prefs: android.content.SharedPreferences? = null
+
+    /** 예열 남은 시간(초, 대략). 예열 중이 아니면 null. */
+    fun warmRemainSec(now: Long = System.currentTimeMillis()): Long? {
+        val since = warmingSince
+        if (since == 0L) return null
+        return ((expectedWarmMs - (now - since)) / 1000).coerceAtLeast(1)
+    }
+
+    fun attach(context: Context) {
+        if (prefs != null) return
+        prefs = context.applicationContext.getSharedPreferences("llm_holder", Context.MODE_PRIVATE).also {
+            expectedWarmMs = it.getLong("warm_ms", 35_000L)
+        }
+    }
+
     fun threads() = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
 
     /** 모델을 (필요하면 열고 예열해서) 잠근 채 block 실행. 열기 실패면 block(0). */
@@ -44,6 +69,7 @@ object LlmHolder {
                 if (handle == 0L && LlamaNative.available) {
                     onOpening()
                     val t0 = System.currentTimeMillis()
+                    main.post { warmingSince = t0 }
                     val h = LlamaNative.init(modelPath, 2048, threads())
                     if (h != 0L) {
                         val t1 = System.currentTimeMillis()
@@ -51,7 +77,11 @@ object LlmHolder {
                         handle = h
                         path = modelPath
                         openInfo = "열기 ${(t1 - t0) / 1000}초 · 예열 ${if (w >= 0) w / 1000 else -1}초"
+                        val took = System.currentTimeMillis() - t0
+                        expectedWarmMs = took
+                        prefs?.edit()?.putLong("warm_ms", took)?.apply()
                     }
+                    main.post { warmingSince = 0L }
                 }
                 return block(handle)
             } finally {
@@ -61,9 +91,22 @@ object LlmHolder {
         }
     }
 
-    /** 영상 재생 시작 때: 메모리가 넉넉하면 뒤에서 미리 열고 예열. */
+    /** 설정에 맞춰 미리 예열 (when = "APP" 앱 켤 때 / "VIDEO" 영상 틀 때). 번역 꺼짐·모델 없음이면 안 함. */
+    fun prewarmIfWanted(context: Context, `when`: String) {
+        val store = com.kakario.videoplayer.data.SettingsStore(context)
+        val wanted = store.aiPrewarm
+        if (wanted == "OFF") return
+        if (`when` == "APP" && wanted != "APP") return
+        if (!store.aiTranslate) return
+        val models = ModelManager(context)
+        if (!models.isReady(AiModel.QWEN3_4B)) return
+        prewarm(context, models.file(AiModel.QWEN3_4B).path)
+    }
+
+    /** 메모리가 넉넉하면 뒤에서 미리 열고 예열. */
     fun prewarm(context: Context, modelPath: String) {
-        if (handle != 0L || !LlamaNative.available) return
+        attach(context)
+        if (handle != 0L || warmingSince != 0L || !LlamaNative.available) return
         if (freeMemory(context) < PREWARM_FREE_BYTES) return
         Thread({ runCatching { use(modelPath) { } } }, "llm-prewarm").apply {
             priority = Thread.MIN_PRIORITY

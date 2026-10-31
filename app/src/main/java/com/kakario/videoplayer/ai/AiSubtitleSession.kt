@@ -80,6 +80,32 @@ class AiSubtitleSession(
         stage = s
         stageSince = System.currentTimeMillis()
     }
+    /** 지금 만들고 있는 덩어리의 시작 위치(ms, 없으면 -1)와 만들기 시작한 시각. */
+    var workStartMs by mutableLongStateOf(-1L)
+        private set
+    private var workSince = 0L
+
+    /**
+     * 오른쪽 위에 띄울 쉬운 안내. 지금 보는 위치의 자막이 이미 있으면 null.
+     * 예) "번역 준비 중 · 약 20초 남음", "지금 장면 번역 자막 만드는 중 · 약 12초 남음", "약 25초 뒤부터 번역 자막이 나와요"
+     */
+    fun friendlyLabel(ph: Long, now: Long): String? {
+        if (korean || failed != null) return null
+        val what = if (llmModel != null && language != "ko") "번역 자막" else "AI 자막"
+        val chunk = (ph / CHUNK_MS).toInt()
+        if (chunk in done) return null
+        LlmHolder.warmRemainSec(now)?.let { return "번역 준비 중 · 약 ${it}초 남음" }
+        val ws = workStartMs
+        if (ws < 0) return if (status != null) "$what 준비 중" else null
+        val remain = (procMs - (now - workSince)).coerceAtLeast(1_000)
+        if ((ws / CHUNK_MS).toInt() == chunk) return "지금 장면 $what 만드는 중 · 약 ${remain / 1000}초 남음"
+        if (ws > ph) {
+            val wait = maxOf(ws - ph, remain)
+            return "약 ${wait / 1000}초 뒤부터 $what${if (what.endsWith("막")) "이" else "가"} 나와요"
+        }
+        return "$what 준비 중"
+    }
+
     /** 지금 위치부터 끊김 없이 자막이 준비된 지점(ms). */
     var readyUntilMs by mutableLongStateOf(0L)
         private set
@@ -176,6 +202,8 @@ class AiSubtitleSession(
                     }
                     val startMs = next * CHUNK_MS
                     val chunkStartedAt = System.currentTimeMillis()
+                    workSince = chunkStartedAt
+                    withContext(Dispatchers.Main) { workStartMs = startMs }
                     status = if (startMs <= ph + 2_000) "AI 자막 만드는 중…"
                     else "AI 자막 ${mmss(startMs)}부터 준비 중"
                     stage("소리 받는 중")
@@ -250,6 +278,7 @@ class AiSubtitleSession(
                     // 한 덩어리 처리 시간(평균) 갱신 — 다음에 얼마나 앞을 고를지 정하는 데 씀
                     val took = System.currentTimeMillis() - chunkStartedAt
                     procMs = (procMs * 0.6 + took * 0.4).toLong().coerceIn(5_000, 180_000)
+                    withContext(Dispatchers.Main) { workStartMs = -1L }
                     updateReady(playhead())
                     saveCache()
                 }
