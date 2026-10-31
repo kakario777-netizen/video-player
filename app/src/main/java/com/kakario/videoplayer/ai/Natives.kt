@@ -51,6 +51,8 @@ object LlamaNative {
 
     @JvmStatic external fun init(modelPath: String, nCtx: Int, threads: Int): Long
     @JvmStatic external fun generate(handle: Long, system: ByteArray, user: ByteArray, prefill: ByteArray, maxTokens: Int): ByteArray?
+    /** [입력 토큰, 생성 토큰, 입력 처리 ms, 생성 ms, 스레드 수] */
+    @JvmStatic external fun lastStats(handle: Long): LongArray
     @JvmStatic external fun abort(handle: Long)
     @JvmStatic external fun free(handle: Long)
 }

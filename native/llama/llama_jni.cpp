@@ -1,6 +1,7 @@
 // llama.cpp(번역용 소형 AI 언어모델) JNI 연결부 — 폰 안에서만 동작, 네트워크 사용 없음
 #include <jni.h>
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <vector>
 #include "llama.h"
@@ -20,7 +21,15 @@ struct LlmHandle {
     int n_ctx = 0;
     int n_batch = 512;
     std::atomic<bool> abort{false};
+    // 마지막 generate 통계: 입력 토큰 수, 생성 토큰 수, 입력 처리 ms, 생성 ms
+    long long st_prompt = 0, st_gen = 0, st_prompt_ms = 0, st_gen_ms = 0;
+    int threads = 0;
 };
+
+static long long now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 static jbyteArray to_bytes(JNIEnv *env, const std::string &s) {
     jbyteArray arr = env->NewByteArray((jsize) s.size());
@@ -45,7 +54,8 @@ Java_com_kakario_videoplayer_ai_LlamaNative_init(JNIEnv *env, jclass, jstring jp
     const char *path = env->GetStringUTFChars(jpath, nullptr);
     llama_model_params mp = llama_model_default_params();
     mp.n_gpu_layers = 0;
-    mp.use_mmap = true;
+    // 앱 전용 외부 폴더는 안드로이드 FUSE를 거쳐 mmap이 매우 느릴 수 있어 처음부터 메모리에 올린다
+    mp.use_mmap = false;
     llama_model *model = llama_model_load_from_file(path, mp);
     env->ReleaseStringUTFChars(jpath, path);
     if (!model) return 0;
@@ -74,6 +84,7 @@ Java_com_kakario_videoplayer_ai_LlamaNative_init(JNIEnv *env, jclass, jstring jp
     h->smpl = smpl;
     h->vocab = llama_model_get_vocab(model);
     h->n_ctx = (int) llama_n_ctx(ctx);
+    h->threads = threads;
     return reinterpret_cast<jlong>(h);
 }
 
@@ -131,6 +142,7 @@ Java_com_kakario_videoplayer_ai_LlamaNative_generate(
     llama_kv_self_clear(h->ctx);
     llama_sampler_reset(h->smpl);
 
+    long long t0 = now_ms();
     for (int i = 0; i < n; i += h->n_batch) {
         if (h->abort.load()) return nullptr;
         int cnt = std::min(h->n_batch, n - i);
@@ -138,8 +150,10 @@ Java_com_kakario_videoplayer_ai_LlamaNative_generate(
         if (llama_decode(h->ctx, batch) != 0) return nullptr;
     }
 
+    long long t1 = now_ms();
     std::string out;
     char piece[256];
+    int gen = 0;
     for (int i = 0; i < maxTokens; ++i) {
         if (h->abort.load()) break;
         llama_token tok = llama_sampler_sample(h->smpl, h->ctx, -1);
@@ -147,7 +161,23 @@ Java_com_kakario_videoplayer_ai_LlamaNative_generate(
         int m = llama_token_to_piece(h->vocab, tok, piece, sizeof(piece), 0, false);
         if (m > 0) out.append(piece, m);
         llama_batch batch = llama_batch_get_one(&tok, 1);
+        gen++;
         if (llama_decode(h->ctx, batch) != 0) break;
     }
+    h->st_prompt = n;
+    h->st_gen = gen;
+    h->st_prompt_ms = t1 - t0;
+    h->st_gen_ms = now_ms() - t1;
     return to_bytes(env, out);
+}
+
+/** 마지막 generate 통계 [입력 토큰, 생성 토큰, 입력 처리 ms, 생성 ms, 스레드 수]. */
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_kakario_videoplayer_ai_LlamaNative_lastStats(JNIEnv *env, jclass, jlong ptr) {
+    auto *h = reinterpret_cast<LlmHandle *>(ptr);
+    jlongArray arr = env->NewLongArray(5);
+    if (!h) return arr;
+    jlong v[5] = {h->st_prompt, h->st_gen, h->st_prompt_ms, h->st_gen_ms, h->threads};
+    env->SetLongArrayRegion(arr, 0, 5, v);
+    return arr;
 }

@@ -211,10 +211,23 @@ fun AiSubtitleSettings() {
                                         } else {
                                             testResult = "번역 중… (모델 여는 데 ${(t1 - t0) / 1000}초)"
                                             val lines = listOf("Hey, are you coming to the party tonight?", "I don't know, I'm really tired.")
+                                            // 같은 번역을 두 번: 첫 번째는 준비 시간이 섞일 수 있어서 두 번째 속도를 같이 본다
                                             val r = AiTranslator.translate(h, lines, emptyList(), "en")
                                             val t2 = System.currentTimeMillis()
+                                            val s1 = LlamaNative.lastStats(h)
+                                            testResult = "두 번째 번역 중… (첫 번째 ${(t2 - t1) / 1000}초)"
+                                            AiTranslator.translate(h, lines, emptyList(), "en")
+                                            val t3 = System.currentTimeMillis()
+                                            val s2 = LlamaNative.lastStats(h)
                                             LlamaNative.free(h)
-                                            sb.append("모델 열기 ${(t1 - t0) / 1000}초 · 번역 ${(t2 - t1) / 1000}초\n")
+                                            fun speed(st: LongArray): String {
+                                                val pp = if (st[2] > 0) st[0] * 1000 / st[2] else 0
+                                                val tg = if (st[3] > 0) st[1] * 1000.0 / st[3] else 0.0
+                                                return "입력 ${st[0]}토큰 ${st[2] / 1000.0}초(${pp}/초) · 생성 ${st[1]}토큰 ${st[3] / 1000.0}초(${String.format("%.1f", tg)}/초)"
+                                            }
+                                            sb.append("모델 열기 ${(t1 - t0) / 1000}초 · 엔진 ${if (AiLibs.fastLoaded) "고성능(i8mm)" else "기본"} · 스레드 ${s1[4]}\n")
+                                            sb.append("1회차 ${(t2 - t1) / 1000}초: ${speed(s1)}\n")
+                                            sb.append("2회차 ${(t3 - t2) / 1000}초: ${speed(s2)}\n")
                                             sb.append("상태: ${r.info}\n")
                                             lines.forEachIndexed { i, l -> sb.append("• $l\n  → ${r.ko.getOrNull(i) ?: "(번역 없음)"}\n") }
                                         }
