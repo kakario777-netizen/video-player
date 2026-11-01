@@ -18,6 +18,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -417,6 +418,8 @@ fun PlayerScreen(
     // ── 오프라인 AI 자막 (폰 안에서만 동작)
     val aiStore = remember { SettingsStore(context) }
     val aiModels = remember { ModelManager(context) }
+    /** 개발자 모드 (자세한 진행 표시·속도 측정). 끄면 간단한 한 줄 안내만. */
+    val devMode = remember { aiStore.aiDevMode }
     // 실시간 시청은 빠른 모델(small)이 있으면 그걸로 — 큰 모델은 폰 CPU로 재생 속도를 못 따라감
     val whisperModel = remember {
         val chosen = AiModel.entries.firstOrNull { it.name == aiStore.aiWhisperModel } ?: AiModel.WHISPER_TURBO
@@ -461,6 +464,10 @@ fun PlayerScreen(
             isUrl = streamUrl != null,
             whisperModel = aiModels.file(whisperModel),
             llmModel = llm,
+            // 여유가 생기면 좋은 모델(설정에서 고른 음성 모델 + 4B 번역)로 꼼꼼하게 다시 → 초록색
+            bestWhisper = AiModel.entries.firstOrNull { it.name == aiStore.aiWhisperModel && it.isWhisper }
+                ?.takeIf { aiModels.isReady(it) }?.let { aiModels.file(it) },
+            bestLlm = if (llm != null && aiModels.isReady(AiModel.QWEN3_4B)) aiModels.file(AiModel.QWEN3_4B) else null,
             onComplete = { list, _ ->
                 // 영상 전체를 다 만들면 영상 옆에 "영상이름.ai.srt"로 저장 → 다음엔 일반 자막처럼 바로 붙는다
                 if (list.isEmpty()) {
@@ -484,6 +491,10 @@ fun PlayerScreen(
         aiSession = session
         session.start(scope) { timeMs.coerceAtLeast(0) }
         onDispose {
+            // 아직 완벽 버전이 아닌 부분이 남았으면 미리 만들기 대기줄로 넘겨 마저 고친다 (설정)
+            if (aiStore.aiFinishOnClose && session.needsUpgrade() && com.kakario.videoplayer.ai.AiBatch.ready(context)) {
+                com.kakario.videoplayer.ai.AiBatch.addFile(context, origin, entry)
+            }
             session.stop()
             aiSession = null
         }
@@ -736,7 +747,8 @@ fun PlayerScreen(
                 ai.notice != null -> ai.notice
                 ai.korean -> null
                 ai.failed != null -> ai.failed
-                else -> ai.topLabel(nowTick)
+                devMode -> ai.topLabel(nowTick)
+                else -> ai.simpleLabel(nowTick)
             }
             val pauseHint = if (ai.notice == null) ai.pauseHint(timeMs, nowTick, paused = !playing) else null
             // 안내 문구는 4초 뒤 사라짐
@@ -746,7 +758,7 @@ fun PlayerScreen(
                     ai.notice = null
                 }
             }
-            if ((small != null || pauseHint != null || ai.stageLines(nowTick) != null) && !inPip) {
+            if ((small != null || pauseHint != null || (devMode && ai.stageLines(nowTick) != null)) && !inPip) {
                 Column(
                     Modifier
                         .align(Alignment.TopEnd)
@@ -754,8 +766,8 @@ fun PlayerScreen(
                         .padding(top = if (controlsVisible) 58.dp else 10.dp, end = 12.dp),
                     horizontalAlignment = Alignment.End,
                 ) {
-                    // 안내(한국어 영상·오류 등)가 있으면 한 줄, 아니면 단계별 3줄
-                    val stageLines = if (ai.notice == null && ai.failed == null && !ai.korean) ai.stageLines(nowTick) else null
+                    // 안내(한국어 영상·오류 등)가 있으면 한 줄, 아니면 단계별 3줄 (개발자 모드일 때만)
+                    val stageLines = if (devMode && ai.notice == null && ai.failed == null && !ai.korean) ai.stageLines(nowTick) else null
                     if (stageLines != null) {
                         Column(
                             Modifier
@@ -865,6 +877,41 @@ fun PlayerScreen(
                     .background(Color(0x66000000))
                     .windowInsetsPadding(WindowInsets.safeDrawing)
             ) {
+                // 왼쪽 밝기 / 오른쪽 볼륨: 짧은 세로 조절바 (지금 상태가 바로 보이고, 끌어서 조절)
+                val maxVol = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+                var brightUi by remember { mutableFloatStateOf(currentBrightness(activity)) }
+                var volUi by remember { mutableIntStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
+                LaunchedEffect(Unit) {
+                    // 볼륨 버튼이나 화면 끌기로 바뀐 것도 반영
+                    while (true) {
+                        brightUi = currentBrightness(activity)
+                        volUi = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+                        delay(300)
+                    }
+                }
+                SideLevelBar(
+                    value = brightUi,
+                    icon = LineIcons.Sun,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 18.dp),
+                    onChange = { v ->
+                        val b = v.coerceIn(0.01f, 1f)
+                        activity?.window?.let { w -> w.attributes = w.attributes.apply { screenBrightness = b } }
+                        brightUi = b
+                        interaction++
+                    },
+                )
+                SideLevelBar(
+                    value = volUi / maxVol.toFloat(),
+                    icon = LineIcons.Volume,
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 18.dp),
+                    onChange = { v ->
+                        val nv = (v * maxVol).roundToInt().coerceIn(0, maxVol)
+                        audio.setStreamVolume(AudioManager.STREAM_MUSIC, nv, 0)
+                        volUi = nv
+                        interaction++
+                    },
+                )
+
                 // 위: 뒤로 + 제목 + 기능 버튼
                 Row(
                     Modifier
@@ -1080,17 +1127,19 @@ fun PlayerScreen(
                                 SheetOption("끄기", selected = !aiOn) { aiOn = false }
                                 if (aiOn) {
                                     aiSession?.language?.let { SheetNote("감지한 언어: ${langLabel(it)}") }
-                                    aiSession?.translateInfo?.let { SheetNote("번역 상태: $it") }
-                                    aiSession?.let { SheetNote("음성 인식 모델: ${it.whisperName}") }
-                                    // 테스트용: 재생 화면에서 바로 음성 인식 속도 재기 (설정의 측정과 비교)
-                                    aiSession?.let { ai ->
-                                        SheetOption("음성 인식 속도 지금 재 보기", selected = false) { ai.benchNow() }
-                                        ai.benchResult?.let { SheetNote(it) }
-                                    }
-                                    // 구간별 걸린 시간 (최근 것부터) — 어디가 느린지 확인용
-                                    aiSession?.timings?.let { list ->
-                                        SheetNote(if (list.isEmpty()) "구간별 걸린 시간: 아직 끝난 구간이 없어요" else "구간별 걸린 시간 (최근 것부터)")
-                                        list.forEach { SheetNote(it) }
+                                    if (devMode) aiSession?.translateInfo?.let { SheetNote("번역 상태: $it") }
+                                    if (devMode) {
+                                        aiSession?.let { SheetNote("음성 인식 모델: ${it.whisperName}") }
+                                        // 테스트용: 재생 화면에서 바로 음성 인식 속도 재기 (설정의 측정과 비교)
+                                        aiSession?.let { ai ->
+                                            SheetOption("음성 인식 속도 지금 재 보기", selected = false) { ai.benchNow() }
+                                            ai.benchResult?.let { SheetNote(it) }
+                                        }
+                                        // 구간별 걸린 시간 (최근 것부터) — 어디가 느린지 확인용
+                                        aiSession?.timings?.let { list ->
+                                            SheetNote(if (list.isEmpty()) "구간별 걸린 시간: 아직 끝난 구간이 없어요" else "구간별 걸린 시간 (최근 것부터)")
+                                            list.forEach { SheetNote(it) }
+                                        }
                                     }
                                     AiShowMode.entries.forEach { m ->
                                         SheetOption(m.label, selected = aiShow == m) {
@@ -1201,6 +1250,41 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+}
+
+/** 재생 화면 양옆의 짧은 세로 조절바 (스마트폰 밝기·볼륨 조절바 느낌). value 0~1. */
+@Composable
+private fun SideLevelBar(value: Float, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onChange: (Float) -> Unit) {
+    val barH = 140.dp
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .width(34.dp)
+                .height(barH)
+                .clip(RoundedCornerShape(17.dp))
+                .background(Color(0x55000000))
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures { change, _ ->
+                        change.consume()
+                        onChange((1f - change.position.y / size.height).coerceIn(0f, 1f))
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures { pos -> onChange((1f - pos.y / size.height).coerceIn(0f, 1f)) }
+                },
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            // 채워진 만큼 흰색
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(value.coerceIn(0f, 1f))
+                    .background(Color(0xDDFFFFFF))
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        LineIcon(icon, size = 20.dp, tint = Color.White)
     }
 }
 
@@ -1337,15 +1421,20 @@ private fun SeekBar(
             textAlign = TextAlign.Center,
         )
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        // AI 자막 진행을 막대 위에 칠한다: 번역까지 끝남 = 파랑 굵게, 음성 인식만 = 하늘색 얇게, 대사 없음 = 회색 얇게
+        // 막대를 직접 그린다 (아래부터): 바탕 → 본 부분(흰색) → AI 자막 진행 색
+        //   대사 없음 = 회색 얇게, 음성 인식만 = 하늘색 얇게, 실시간 번역 = 파랑 굵게, 꼼꼼한 재번역(완벽 버전) = 초록 굵게
         val m = chunkMap
-        if ((m.translated.isNotEmpty() || m.heard.isNotEmpty() || m.silent.isNotEmpty()) && lengthMs > 0) {
-            androidx.compose.foundation.Canvas(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp)
-                    .height(8.dp)
-            ) {
+        androidx.compose.foundation.Canvas(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp)
+                .height(10.dp)
+        ) {
+            val trackH = size.height * 0.45f
+            val trackTop = (size.height - trackH) / 2
+            drawRect(Color(0x40FFFFFF), topLeft = Offset(0f, trackTop), size = androidx.compose.ui.geometry.Size(size.width, trackH))
+            drawRect(Color(0xCCFFFFFF), topLeft = Offset(0f, trackTop), size = androidx.compose.ui.geometry.Size(size.width * shown, trackH))
+            if (lengthMs > 0) {
                 val total = ((lengthMs - 1) / chunkMs + 1).toInt()
                 fun paint(set: Set<Int>, color: Color, thick: Float) {
                     val h = size.height * thick
@@ -1357,9 +1446,10 @@ private fun SeekBar(
                         drawRect(color, topLeft = Offset(x0, top), size = androidx.compose.ui.geometry.Size(x1 - x0 + 0.5f, h))
                     }
                 }
-                paint(m.silent, Color(0x99B0B0B0), 0.3f)
-                paint(m.heard, Color(0xFF8FD3FF), 0.3f)
-                paint(m.translated, Color(0xFF2F7BFF), 1f)
+                paint(m.silent, Color(0xAAB0B0B0), 0.25f)
+                paint(m.heard, Color(0xFF8FD3FF), 0.25f)
+                paint(m.translated, Color(0xFF2F7BFF), 0.8f)
+                paint(m.perfect, Color(0xFF2ECC71), 0.8f)
             }
         }
         Slider(
@@ -1376,9 +1466,13 @@ private fun SeekBar(
             enabled = lengthMs > 0,
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
-                // 본 부분은 흰색, 아직 안 본 부분은 투명하게 → 밑의 파란 '번역 완료' 구간이 보이도록
-                activeTrackColor = Color(0xDDFFFFFF),
-                inactiveTrackColor = Color(0x40FFFFFF),
+                // 막대는 위 그림이 그린다 → 슬라이더 자체 막대는 투명 (손잡이만)
+                activeTrackColor = Color.Transparent,
+                inactiveTrackColor = Color.Transparent,
+                activeTickColor = Color.Transparent,
+                inactiveTickColor = Color.Transparent,
+                disabledActiveTrackColor = Color.Transparent,
+                disabledInactiveTrackColor = Color.Transparent,
             ),
             modifier = Modifier.fillMaxWidth(),
         )

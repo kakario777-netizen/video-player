@@ -50,7 +50,70 @@ class AiSubtitleSession(
     private val onComplete: suspend (List<AiCue>, String?) -> Boolean = { _, _ -> false },
     /** 미리 만들기(재생 없이): 처음부터 끝까지 만들고 파일로 저장한 뒤 끝낸다. */
     private val batch: Boolean = false,
+    /**
+     * 꼼꼼한 재번역(완벽 버전)용 더 좋은 모델. 실시간용 모델과 같거나 null이면 재번역하지 않는다.
+     * 여유가 생기면(앞서간 거리가 넉넉하거나, 실시간 처리가 끝났거나, 일시정지 중) 앞부분부터 다시 만든다.
+     */
+    private val bestWhisper: File? = null,
+    private val bestLlm: File? = null,
 ) {
+    /** 지금 쓰는 모델이 이미 가장 좋은 모델인지 (그러면 만든 구간이 곧 완벽 버전). */
+    private val liveIsBest: Boolean =
+        (bestWhisper == null || bestWhisper == whisperModel) && (bestLlm == null || bestLlm == llmModel)
+    /** 완벽 버전(좋은 모델로 만든) 구간. */
+    private val perfect: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    /** 지금 꼼꼼한 재번역 중인지 (화면 안내용). */
+    var upgrading by mutableStateOf(false)
+        private set
+    @Volatile private var bestWhisperHandle = 0L
+    @Volatile private var perfectExported = false
+
+    /** 처음 번역 자막이 생긴 시각 (잠깐 '실시간 번역을 시작합니다' 안내용). */
+    @Volatile private var firstTranslatedAt = 0L
+
+    /**
+     * 개발자 모드가 꺼져 있을 때 오른쪽 위에 띄울 간단한 한 줄.
+     * 준비 → 초기 음성 인식 → 실시간 번역 시작 → 실시간 번역 중 % → (여유 있을 때) 꼼꼼한 재번역 %
+     */
+    fun simpleLabel(now: Long): String? {
+        if (korean || failed != null) return null
+        val tr = llmModel != null && language != "ko"
+        val word = if (tr) "번역" else "자막 만들기"
+        if (LlmHolder.warmRemainSec(now) != null || stage == "음성 엔진 여는 중" || stage == "영상 여는 중") {
+            return if (tr) "AI 번역을 준비 중입니다…" else "AI 자막을 준비 중입니다…"
+        }
+        if (upgrading) return "빠른 번역 부분을 꼼꼼하게 재번역하고 있습니다… ${(perfectFraction * 100).toInt()}%"
+        val anyDone = cues.any { if (tr) it.ko != null else true }
+        if (!anyDone) return if (job?.isActive == true) "초기 음성 인식 중…" else null
+        if (firstTranslatedAt > 0 && now - firstTranslatedAt < 4_000) return "실시간 ${word}을 시작합니다…"
+        if (progress >= 1f) return null
+        return "실시간 $word 중 ${(progress * 100).toInt()}%"
+    }
+
+    /** 말소리가 있는(자막이 있는) 구간 번호들. */
+    private fun speechChunks(): Set<Int> = cues.map { (it.startMs / CHUNK_MS).toInt() }.toSet()
+
+    /** 아직 완벽 버전이 아닌 말소리 구간 중 가장 앞 (없으면 null). */
+    private fun upgradeCandidate(): Int? {
+        if (liveIsBest || language == null || language == "ko") return null
+        val speech = speechChunks()
+        return done.filter { it in speech && it !in perfect }.minOrNull()
+    }
+
+    /** 완벽 버전 비율 (말소리 구간 기준, 0~1). */
+    val perfectFraction: Float
+        get() {
+            val speech = speechChunks()
+            if (speech.isEmpty()) return 0f
+            return (speech.count { it in perfect }.toFloat() / speech.size).coerceIn(0f, 1f)
+        }
+
+    /** 영상을 닫을 때 아직 완벽 버전이 아닌 구간이 남았는지 (남았으면 미리 만들기 대기줄로). */
+    fun needsUpgrade(): Boolean = !liveIsBest && !korean && language != null && language != "ko" &&
+        (done.size < totalChunks() || upgradeCandidate() != null)
+
+    private fun totalChunks(): Int = if (durationMs > 0) ((durationMs - 1) / CHUNK_MS + 1).toInt() else Int.MAX_VALUE
+
     /** 미리 만들기가 끝까지 완료됐는지. */
     @Volatile var completed = false
         private set
@@ -140,7 +203,7 @@ class AiSubtitleSession(
     private val heard: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /** 재생 막대 칠하기용: 번역까지 끝남 / 음성 인식만 됨 / 대사 없음. */
-    data class ChunkMap(val translated: Set<Int>, val heard: Set<Int>, val silent: Set<Int>) {
+    data class ChunkMap(val translated: Set<Int>, val heard: Set<Int>, val silent: Set<Int>, val perfect: Set<Int> = emptySet()) {
         companion object { val EMPTY = ChunkMap(emptySet(), emptySet(), emptySet()) }
     }
 
@@ -158,7 +221,8 @@ class AiSubtitleSession(
             }
         }
         for (i in heard) if (i !in done && !byChunk[i].isNullOrEmpty()) hd += i
-        return ChunkMap(tr, hd, si)
+        val pf = if (liveIsBest) tr.toSet() else perfect.filter { it in tr }.toSet()
+        return ChunkMap(tr, hd, si, pf)
     }
 
     /** 번역까지 끝난 비율 (대사 없는 구간 포함) — 오른쪽 위 원형 표시. */
@@ -393,8 +457,25 @@ class AiSubtitleSession(
                     val next = (first..last).firstOrNull { it !in done && (it + 1) * CHUNK_MS > readyAt }
                         ?: (first..last).firstOrNull { it !in done }
                         ?: (0 until minOf(first, last + 1)).firstOrNull { it !in done }
+                    // 여유가 있으면 앞부분부터 좋은 모델로 꼼꼼하게 다시 (완벽 버전)
+                    if (!batch) {
+                        val cand = upgradeCandidate()
+                        val lead = readyUntilMs - ph
+                        if (cand != null && (next == null || playerPaused || lead >= UPGRADE_LEAD_MS)) {
+                            upgradeOne(chunker, cand)
+                            continue
+                        }
+                    }
                     if (next == null) {
                         status = null
+                        // 꼼꼼한 재번역까지 다 끝났으면 완벽 버전으로 다시 저장 (한 번만)
+                        if (durationMs > 0 && exported && !perfectExported && !liveIsBest && upgradeCandidate() == null) {
+                            val ok = runCatching { onComplete(cues, language) }.getOrDefault(false)
+                            if (ok) {
+                                perfectExported = true
+                                saveCache()
+                            }
+                        }
                         // 다 만들었으면 자막 파일로 저장 (한 번만)
                         if (durationMs > 0 && !exported) {
                             val list = cues
@@ -536,6 +617,10 @@ class AiSubtitleSession(
                             .sortedBy { it.startMs }
                     }
                     done += next
+                    if (liveIsBest) perfect += next
+                    if (firstTranslatedAt == 0L && translated.any { it.ko != null || llmModel == null }) {
+                        firstTranslatedAt = System.currentTimeMillis()
+                    }
                     addTiming(
                         "${mmss(startMs)} · 소리 ${sec1(audioTook)} · 인식 ${sec1(whisperTook)}$whisperDetail" +
                             (if (translateTook >= 0) " · 번역 ${sec1(translateTook)} (${segs.size}줄)" else "") +
@@ -556,6 +641,9 @@ class AiSubtitleSession(
                 runCatching { chunker?.close() }
                 if (whisperHandle != 0L) WhisperNative.free(whisperHandle)
                 whisperHandle = 0
+                if (bestWhisperHandle != 0L) WhisperNative.free(bestWhisperHandle)
+                bestWhisperHandle = 0
+                upgrading = false
                 llmHandle = 0 // 번역 모델은 LlmHolder가 들고 있다가 안 쓰면 알아서 내려놓음
                 worker.shutdown()
             }
@@ -565,6 +653,7 @@ class AiSubtitleSession(
     /** 멈추기 (재생 화면을 닫을 때). 진행 중인 인식·번역도 바로 중단시킨다. */
     fun stop() {
         whisperHandle.takeIf { it != 0L }?.let { WhisperNative.abort(it) }
+        bestWhisperHandle.takeIf { it != 0L }?.let { WhisperNative.abort(it) }
         llmHandle.takeIf { it != 0L }?.let { LlamaNative.abort(it) }
         job?.cancel()
     }
@@ -579,6 +668,54 @@ class AiSubtitleSession(
         return null
     }
 
+    // ───────────────────────────── 꼼꼼한 재번역 (완벽 버전)
+
+    /** 구간 하나를 좋은 모델(인식 turbo 등 + 번역 4B)로 다시 만들어 바꿔 끼운다. */
+    private suspend fun upgradeOne(chunker: AudioSource, idx: Int) {
+        val startMs = idx * CHUNK_MS
+        withContext(Dispatchers.Main) { upgrading = true }
+        try {
+            val pcm = chunker.read(startMs, CHUNK_MS) ?: run { perfect += idx; return }
+            val useHandle: Long = if (bestWhisper == null || bestWhisper == whisperModel) {
+                whisperHandle
+            } else {
+                if (bestWhisperHandle == 0L) bestWhisperHandle = WhisperNative.init(bestWhisper.path)
+                bestWhisperHandle
+            }
+            if (useHandle == 0L) {
+                perfect += idx // 좋은 모델을 못 열면 이 구간은 그대로 둔다
+                return
+            }
+            AiLibs.compute.lock()
+            val raw = try {
+                // 미리 만들기와 같은 꼼꼼한 설정 (재시도 허용)
+                WhisperNative.transcribe(useHandle, pcm, language ?: "auto", curThreads(), false, false)
+            } finally {
+                AiLibs.compute.unlock()
+            }
+            if (raw == null) return
+            val lines = String(raw, Charsets.UTF_8).split('\n')
+            val segs = lines.drop(1).mapNotNull { line ->
+                val p = line.split('\t', limit = 3)
+                if (p.size < 3) return@mapNotNull null
+                val t0 = p[0].toLongOrNull() ?: return@mapNotNull null
+                val t1 = p[1].toLongOrNull() ?: return@mapNotNull null
+                val text = collapseRepeats(p[2].trim())
+                if (text.isEmpty() || isHallucination(text)) return@mapNotNull null
+                AiCue(startMs + t0, startMs + minOf(t1, CHUNK_MS).coerceAtLeast(t0 + 500), text, null)
+            }
+            val translated = if (segs.isNotEmpty() && (bestLlm ?: llmModel) != null) translate(segs, language, bestLlm ?: llmModel) else segs
+            withContext(Dispatchers.Main) {
+                cues = (cues.filter { it.startMs < startMs || it.startMs >= startMs + CHUNK_MS } + translated)
+                    .sortedBy { it.startMs }
+            }
+            perfect += idx
+            saveCache()
+        } finally {
+            withContext(Dispatchers.Main) { upgrading = false }
+        }
+    }
+
     // ───────────────────────────── 번역
 
     /** 번역 상태 (자막 메뉴에서 확인용). */
@@ -586,15 +723,15 @@ class AiSubtitleSession(
         private set
     @Volatile private var translateBroken = false
 
-    private fun translate(segs: List<AiCue>, lang: String?): List<AiCue> {
-        if (llmModel == null) return segs
+    private fun translate(segs: List<AiCue>, lang: String?, model: File? = llmModel): List<AiCue> {
+        if (model == null) return segs
         if (!LlamaNative.available) {
             translateInfo = "번역 엔진을 불러오지 못했어요"
             return segs
         }
         if (translateBroken) return segs
         val out = ArrayList<AiCue>(segs.size)
-        LlmHolder.use(llmModel.path, onOpening = { status = "번역 모델 준비 중…" }) { h ->
+        LlmHolder.use(model.path, onOpening = { status = "번역 모델 준비 중…" }) { h ->
             if (h == 0L) {
                 translateBroken = true
                 translateInfo = "번역 모델을 열지 못했어요 (파일이 깨졌거나 메모리 부족) — 원어 자막만 보여요"
@@ -670,6 +807,9 @@ class AiSubtitleSession(
             exported = o.optBoolean("exported", false)
             val d = o.optJSONArray("done") ?: JSONArray()
             for (i in 0 until d.length()) done += d.getInt(i)
+            val pf = o.optJSONArray("perfect") ?: JSONArray()
+            for (i in 0 until pf.length()) perfect += pf.getInt(i)
+            perfectExported = o.optBoolean("perfectExported", false)
             val arr = o.optJSONArray("cues") ?: JSONArray()
             val list = ArrayList<AiCue>()
             for (i in 0 until arr.length()) {
@@ -682,6 +822,12 @@ class AiSubtitleSession(
                 list.filter { it.ko == null }.forEach { done -= (it.startMs / CHUNK_MS).toInt() }
             }
             cues = list.sortedBy { it.startMs }
+            if (batch) {
+                // 미리 만들기는 좋은 모델로 돈다 → 보면서 빠르게 만든(완벽 버전 아닌) 구간은 다시 만들고, 끝나면 다시 저장
+                val speech = list.map { (it.startMs / CHUNK_MS).toInt() }.toSet()
+                done.filter { it in speech && it !in perfect }.forEach { done -= it }
+                exported = false
+            }
         }
     }
 
@@ -691,6 +837,12 @@ class AiSubtitleSession(
             o.put("lang", language ?: "")
             o.put("exported", exported)
             o.put("done", JSONArray(done.sorted()))
+            o.put("perfect", JSONArray(perfect.sorted()))
+            o.put("perfectExported", perfectExported)
+            // 미리 만들기 대기줄이 '다 됐으니 건너뛰기'를 판단할 때 씀
+            val all = durationMs > 0 && done.size >= totalChunks() &&
+                (liveIsBest || speechChunks().all { it in perfect })
+            o.put("allPerfect", all)
             val arr = JSONArray()
             cues.forEach { c ->
                 arr.put(JSONObject().put("s", c.startMs).put("e", c.endMs).put("t", c.text).put("k", c.ko ?: JSONObject.NULL))
@@ -702,6 +854,8 @@ class AiSubtitleSession(
 
     companion object {
         const val CHUNK_MS = 30_000L
+        /** 지금 위치보다 이만큼 앞서 있으면 남는 시간에 꼼꼼한 재번역을 한다. */
+        private const val UPGRADE_LEAD_MS = 150_000L
         /** 지금 위치에서 몇 덩어리(30초)까지 미리 만들지 = 10분. */
         private const val LOOKAHEAD = 20
         private const val SILENCE = 0.004f

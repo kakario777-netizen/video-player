@@ -72,6 +72,8 @@ fun AiSubtitleSettings() {
     var fastCpu by remember { mutableStateOf(store.aiFastCpu) }
     var liveFast by remember { mutableStateOf(store.aiLiveFast) }
     var liveFastTr by remember { mutableStateOf(store.aiLiveFastTranslate) }
+    var devMode by remember { mutableStateOf(store.aiDevMode) }
+    var finishOnClose by remember { mutableStateOf(store.aiFinishOnClose) }
     var prewarm by remember { mutableStateOf(store.aiPrewarm) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -255,7 +257,7 @@ fun AiSubtitleSettings() {
 
             // 번역 시험: 영상 없이 번역 모델만 돌려서 결과와 걸린 시간을 보여준다
             val testModel = AiModel.translator(models, live = true, preferFast = liveFastTr)
-            if (translate && testModel != null) {
+            if (devMode && translate && testModel != null) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -329,7 +331,7 @@ fun AiSubtitleSettings() {
             var benchRunning by remember { mutableStateOf(false) }
             var benchResult by remember { mutableStateOf<String?>(null) }
             val benchModel = listOf(AiModel.WHISPER_SMALL, AiModel.WHISPER_TURBO, AiModel.WHISPER_LARGE).firstOrNull { models.isReady(it) }
-            if (benchModel != null) {
+            if (devMode && benchModel != null) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -484,6 +486,60 @@ fun AiSubtitleSettings() {
             )
             TextButton(onClick = { clearAsk = 1 }, modifier = Modifier.padding(horizontal = 12.dp)) {
                 Text("만들어 둔 AI 자막 모두 지우기")
+            }
+
+            SubHeader("⑤ 꼼꼼한 재번역 (완벽 버전)")
+            Text(
+                "보면서는 빠른 모델로 만들고, 여유가 생기면(일시정지·충분히 앞서감·끝까지 다 만듦) 앞부분부터 " +
+                    "위에서 고른 음성 모델과 4B 번역으로 다시 만들어요. 다시 만든 구간은 재생 막대에 초록색으로 보여요",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = finishOnClose, onValueChange = {
+                        finishOnClose = it
+                        store.aiFinishOnClose = it
+                    })
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("영상을 닫으면 남은 부분 마저 고치기", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        "아직 꼼꼼하게 못 고친 부분을 미리 만들기 대기줄에 넣어 마저 만들어요 (알림으로 진행 표시)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = finishOnClose, onCheckedChange = null)
+            }
+
+            SubHeader("⑥ 개발자 모드")
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .toggleable(value = devMode, onValueChange = {
+                        devMode = it
+                        store.aiDevMode = it
+                    })
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("자세한 진행 표시·속도 측정", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                    Text(
+                        "켜면 재생 화면 오른쪽 위에 단계별 시간·FTP 기록이 보이고, 번역 시험·속도 측정 버튼이 생겨요. " +
+                            "끄면 간단한 한 줄 안내만 보여요",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = devMode, onCheckedChange = null)
             }
         }
     }

@@ -187,6 +187,20 @@ class SettingsStore(context: Context) {
             prefs.edit().putString("ai_prewarm", value).apply()
         }
 
+    /** 영상을 닫을 때 아직 꼼꼼한 재번역이 안 된 부분을 미리 만들기 대기줄에 넣을지. */
+    var aiFinishOnClose: Boolean
+        get() = prefs.getBoolean("ai_finish_on_close", true)
+        set(value) {
+            prefs.edit().putBoolean("ai_finish_on_close", value).apply()
+        }
+
+    /** 개발자 모드: AI 자막 자세한 진행 표시·속도 측정 보이기. */
+    var aiDevMode: Boolean
+        get() = prefs.getBoolean("ai_dev_mode", false)
+        set(value) {
+            prefs.edit().putBoolean("ai_dev_mode", value).apply()
+        }
+
     /** 재생하면서 볼 때는 빠른 번역 모델(Qwen3 1.7B)을 쓸지 (받아 둔 경우). */
     var aiLiveFastTranslate: Boolean
         get() = prefs.getBoolean("ai_live_fast_tr", true)

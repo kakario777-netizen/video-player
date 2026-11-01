@@ -274,14 +274,23 @@ object AiBatch {
     /** 한국어 영상(이미 판단됨), 자막 파일이 있는 영상, AI 자막을 이미 다 만든 영상은 건너뜀. */
     private fun shouldSkip(app: Context, origin: MediaOrigin, entry: FileEntry, folder: List<FileEntry>): Boolean {
         val base = entry.name.substringBeforeLast('.').lowercase()
-        val subs = Subtitles.findFor(entry, folder).filter { it.name.lowercase().startsWith(base) }
+        // 사람이 만든 자막 파일이 있으면 건너뜀 (앱이 만든 .ai.srt는 아래 기록으로 판단)
+        val subs = Subtitles.findFor(entry, folder).filter {
+            val n = it.name.lowercase()
+            n.startsWith(base) && !n.endsWith(".ai.srt")
+        }
         if (subs.isNotEmpty()) return true
         val key = PlaybackStore.get(app).keyFor(origin, entry)
         val dir = File(app.filesDir, "aisubs")
         if (File(dir, AiSubtitleSession.sha1(key) + ".ko").exists()) return true
         val cache = File(dir, AiSubtitleSession.sha1(key) + ".json")
-        if (cache.exists() && runCatching { cache.readText().contains("\"exported\":true") }.getOrDefault(false)) return true
-        return false
+        if (cache.exists()) {
+            // 완벽 버전까지 다 만들었으면 건너뜀 (보면서 빠르게 만든 것만 있으면 좋은 모델로 다시)
+            val text = runCatching { cache.readText() }.getOrDefault("")
+            return text.contains("\"allPerfect\":true")
+        }
+        // 기록은 없는데 .ai.srt가 이미 있으면 (다른 데서 만든 것) 건너뜀
+        return folder.any { it.name.lowercase() == base + ".ai.srt" }
     }
 }
 
