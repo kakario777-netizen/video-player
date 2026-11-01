@@ -55,6 +55,7 @@ fun FavoritesScreen(
 ) {
     var removing by remember { mutableStateOf<Favorite?>(null) }
     var removingRecent by remember { mutableStateOf<RecentVideo?>(null) }
+    var clearRecentStep by remember { mutableStateOf(0) }
     val context = LocalContext.current
     val playback = remember { PlaybackStore.get(context) }
     val version = playback.version
@@ -73,32 +74,6 @@ fun FavoritesScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (recent.isNotEmpty()) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column {
-                    Text(
-                        "▶ 이어서 보기",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        rowItems(recent, key = { "${it.serverId}|${it.path}" }) { r ->
-                            val server = servers.firstOrNull { it.id == r.serverId }
-                            RecentTile(
-                                origin = MediaOrigin(server),
-                                item = r,
-                                source = if (r.serverId == null) "내 폰" else (server?.name ?: ""),
-                                local = r.serverId == null,
-                                onClick = { onPlayRecent(r) },
-                                onLongClick = { removingRecent = r },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
         if (favorites.isEmpty()) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(
@@ -124,7 +99,6 @@ fun FavoritesScreen(
         } else {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column {
-                    if (recent.isNotEmpty()) Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         LineIcon(LineIcons.StarFilled, size = 18.dp)
                         Spacer(Modifier.width(6.dp))
@@ -153,6 +127,67 @@ fun FavoritesScreen(
                 )
             }
         }
+        // 이어서 보기 (즐겨찾기 아래) — 오른쪽 휴지통으로 최근 시청 기록 모두 지우기
+        if (recent.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        LineIcon(LineIcons.History, size = 18.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "이어서 보기",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            modifier = Modifier.weight(1f),
+                        )
+                        androidx.compose.material3.IconButton(onClick = { clearRecentStep = 1 }) {
+                            LineIcon(LineIcons.Trash, size = 20.dp)
+                        }
+                    }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        rowItems(recent, key = { "${it.serverId}|${it.path}" }) { r ->
+                            val server = servers.firstOrNull { it.id == r.serverId }
+                            RecentTile(
+                                origin = MediaOrigin(server),
+                                item = r,
+                                source = if (r.serverId == null) "내 폰" else (server?.name ?: ""),
+                                local = r.serverId == null,
+                                onClick = { onPlayRecent(r) },
+                                onLongClick = { removingRecent = r },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (clearRecentStep > 0) {
+        AlertDialog(
+            onDismissRequest = { clearRecentStep = 0 },
+            title = { Text(if (clearRecentStep == 1) "최근 시청 기록 지우기" else "정말 지울까요?") },
+            text = {
+                Text(
+                    if (clearRecentStep == 1) "이어서 보기 목록을 모두 지울까요?"
+                    else "목록만 비워지고, 영상 파일은 그대로예요."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (clearRecentStep == 1) clearRecentStep = 2 else {
+                        playback.clearRecent()
+                        clearRecentStep = 0
+                    }
+                }) {
+                    Text(
+                        if (clearRecentStep == 1) "다음" else "네, 지울게요",
+                        color = if (clearRecentStep == 2) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    )
+                }
+            },
+            dismissButton = { TextButton(onClick = { clearRecentStep = 0 }) { Text("취소") } },
+        )
     }
 
     removingRecent?.let { r ->

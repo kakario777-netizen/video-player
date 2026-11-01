@@ -94,6 +94,12 @@ class PlaybackStore private constructor(context: Context) {
         version++
     }
 
+    /** 이어서 보기 목록 모두 비우기 (본 위치 기록은 그대로). */
+    fun clearRecent() {
+        saveRecent(emptyList())
+        version++
+    }
+
     /** 서버를 지우면 그 서버의 기록도 지운다. */
     fun removeServer(serverId: Long) {
         saveRecent(recent().filterNot { it.serverId == serverId })

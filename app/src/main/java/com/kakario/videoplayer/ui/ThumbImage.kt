@@ -68,7 +68,7 @@ fun ThumbImage(origin: MediaOrigin, entry: FileEntry, modifier: Modifier = Modif
                     .background(Color(0x99000000)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("▶", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                LineIcon(LineIcons.Play, size = 18.dp, tint = Color.White)
             }
         }
     }

@@ -132,6 +132,24 @@ object LineIcons {
             "M6.5,6.5 L7.4,19 A1.3,1.3 0 0 0 8.7,20.2 H15.3 A1.3,1.3 0 0 0 16.6,19 L17.5,6.5", "M10.2,10 V16.5", "M13.8,10 V16.5",
         )
     }
+    /** 격자 보기 (네 칸) */
+    val Grid: ImageVector by lazy {
+        lineIcon(
+            "Grid",
+            "M5,4 H10 A1,1 0 0 1 11,5 V10 A1,1 0 0 1 10,11 H5 A1,1 0 0 1 4,10 V5 A1,1 0 0 1 5,4 Z",
+            "M14,4 H19 A1,1 0 0 1 20,5 V10 A1,1 0 0 1 19,11 H14 A1,1 0 0 1 13,10 V5 A1,1 0 0 1 14,4 Z",
+            "M5,13 H10 A1,1 0 0 1 11,14 V19 A1,1 0 0 1 10,20 H5 A1,1 0 0 1 4,19 V14 A1,1 0 0 1 5,13 Z",
+            "M14,13 H19 A1,1 0 0 1 20,14 V19 A1,1 0 0 1 19,20 H14 A1,1 0 0 1 13,19 V14 A1,1 0 0 1 14,13 Z",
+        )
+    }
+    /** 목록 보기 (줄) */
+    val ListView: ImageVector by lazy {
+        lineIcon("ListView", "M8.5,6 H20", "M8.5,12 H20", "M8.5,18 H20", "M4,6 H4.01", "M4,12 H4.01", "M4,18 H4.01")
+    }
+    /** 수정 (연필) */
+    val Pencil: ImageVector by lazy {
+        lineIcon("Pencil", "M15.5,4.5 L19.5,8.5 L9,19 H5 V15 Z", "M13,7 L17,11")
+    }
     val Check: ImageVector by lazy { lineIcon("Check", "M5,12.5 L9.8,17 L19,7.5") }
     val Warning: ImageVector by lazy { lineIcon("Warning", "M12,4 L21,19.5 H3 Z", "M12,10 V14", "M12,16.8 V16.81") }
 

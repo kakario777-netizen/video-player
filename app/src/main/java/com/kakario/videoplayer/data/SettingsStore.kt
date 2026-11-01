@@ -194,6 +194,13 @@ class SettingsStore(context: Context) {
             prefs.edit().putBoolean("ai_finish_on_close", value).apply()
         }
 
+    /** FTP 서버 목록을 격자로 볼지 (아니면 줄 목록). */
+    var serverGrid: Boolean
+        get() = prefs.getBoolean("server_grid", false)
+        set(value) {
+            prefs.edit().putBoolean("server_grid", value).apply()
+        }
+
     /** 개발자 모드: AI 자막 자세한 진행 표시·속도 측정 보이기. */
     var aiDevMode: Boolean
         get() = prefs.getBoolean("ai_dev_mode", false)

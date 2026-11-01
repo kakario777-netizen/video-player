@@ -3,6 +3,11 @@ package com.kakario.videoplayer.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.PaddingValues
@@ -57,6 +62,10 @@ fun ServerListScreen(
     // null = 창 닫힘, id 0 = 새 서버, 그 외 = 수정 중인 서버
     var editing by remember { mutableStateOf<FtpServer?>(null) }
     var deleting by remember { mutableStateOf<FtpServer?>(null) }
+    var deleteStep by remember { mutableStateOf(1) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val store = remember { com.kakario.videoplayer.data.SettingsStore(context) }
+    var grid by remember { mutableStateOf(store.serverGrid) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -75,18 +84,59 @@ fun ServerListScreen(
         if (servers.isEmpty()) {
             EmptyServers(Modifier.padding(padding))
         } else {
-            LazyColumn(
-                modifier = Modifier.padding(padding),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(servers, key = { it.id }) { server ->
-                    ServerCard(
-                        server = server,
-                        onClick = { onOpen(server) },
-                        onEdit = { editing = server },
-                        onDelete = { deleting = server },
+            Column(Modifier.padding(padding)) {
+                // 오른쪽 위 보기 전환 (윈도우 탐색기처럼): 누를 때마다 격자 ↔ 목록
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "FTP 서버 ${servers.size}개",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
                     )
+                    IconButton(onClick = {
+                        grid = !grid
+                        store.serverGrid = grid
+                    }) {
+                        LineIcon(if (grid) LineIcons.ListView else LineIcons.Grid, size = 22.dp)
+                    }
+                }
+                if (grid) {
+                    // 1:1 칸. 폭에 따라 폴드(펼침)는 3칸, 일반 폰은 2칸 정도
+                    BoxWithConstraints(Modifier.fillMaxSize()) {
+                        val cols = (maxWidth / 200.dp).toInt().coerceIn(2, 4)
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(cols),
+                            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            gridItems(servers, key = { it.id }) { server ->
+                                ServerTile(
+                                    server = server,
+                                    onClick = { onOpen(server) },
+                                    onEdit = { editing = server },
+                                    onDelete = { deleting = server; deleteStep = 1 },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(servers, key = { it.id }) { server ->
+                            ServerCard(
+                                server = server,
+                                onClick = { onOpen(server) },
+                                onEdit = { editing = server },
+                                onDelete = { deleting = server; deleteStep = 1 },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -103,16 +153,29 @@ fun ServerListScreen(
         )
     }
 
+    // 삭제는 두 번 물어본다
     deleting?.let { target ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("서버 삭제") },
-            text = { Text("'${target.name}' 서버를 목록에서 지울까요?") },
+            title = { Text(if (deleteStep == 1) "서버 삭제" else "정말 지울까요?") },
+            text = {
+                Text(
+                    if (deleteStep == 1) "'${target.name}' 서버를 목록에서 지울까요?"
+                    else "'${target.name}' 서버 정보(주소·아이디·비밀번호)가 지워져요. 서버의 파일은 그대로예요."
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
-                    onDelete(target)
-                    deleting = null
-                }) { Text("삭제", color = MaterialTheme.colorScheme.error) }
+                    if (deleteStep == 1) deleteStep = 2 else {
+                        onDelete(target)
+                        deleting = null
+                    }
+                }) {
+                    Text(
+                        if (deleteStep == 1) "다음" else "네, 지울게요",
+                        color = if (deleteStep == 2) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    )
+                }
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("취소") } },
         )
@@ -171,11 +234,52 @@ private fun ServerCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = onEdit) {
-                Icon(Icons.Filled.Edit, contentDescription = "수정", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            IconButton(onClick = onEdit) { LineIcon(LineIcons.Pencil, size = 22.dp) }
+            IconButton(onClick = onDelete) { LineIcon(LineIcons.Trash, size = 22.dp, tint = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+/** 격자 보기의 서버 한 칸 (정사각형). 오른쪽 아래 수정·휴지통. */
+@Composable
+private fun ServerTile(
+    server: FtpServer,
+    onClick: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Column(
+                Modifier.align(Alignment.Center).padding(horizontal = 10.dp).padding(bottom = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                LineIcon(LineIcons.Server, size = 44.dp)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    server.name.ifBlank { server.host },
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Text(
+                    server.host,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "삭제", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.align(Alignment.BottomEnd)) {
+                IconButton(onClick = onEdit) { LineIcon(LineIcons.Pencil, size = 20.dp) }
+                IconButton(onClick = onDelete) { LineIcon(LineIcons.Trash, size = 20.dp, tint = MaterialTheme.colorScheme.error) }
             }
         }
     }
