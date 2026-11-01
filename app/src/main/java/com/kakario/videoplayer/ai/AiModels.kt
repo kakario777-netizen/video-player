@@ -38,6 +38,25 @@ enum class AiModel(
         "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
         2_500_000_000L, false,
     ),
+    QWEN3_1_7B(
+        "빠른 번역 (Qwen3 1.7B)", "영상 보면서 실시간 번역용 — 4B보다 2배쯤 빠르지만 조금 덜 자연스러움",
+        "Qwen_Qwen3-1.7B-Q4_K_M.gguf",
+        "https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF/resolve/main/Qwen_Qwen3-1.7B-Q4_K_M.gguf",
+        1_280_000_000L, false,
+    ),
+    ;
+
+    companion object {
+        /**
+         * 번역 모델 고르기.
+         * live = 영상 보면서(빠른 모델 우선, 설정에서 켜 둔 경우) / 아니면 미리 만들기(정확한 4B 우선).
+         * 받은 것이 하나뿐이면 그걸 쓴다. 없으면 null.
+         */
+        fun translator(models: ModelManager, live: Boolean, preferFast: Boolean): AiModel? {
+            val order = if (live && preferFast) listOf(QWEN3_1_7B, QWEN3_4B) else listOf(QWEN3_4B, QWEN3_1_7B)
+            return order.firstOrNull { models.isReady(it) }
+        }
+    }
 }
 
 /** 다운로드 상태. */

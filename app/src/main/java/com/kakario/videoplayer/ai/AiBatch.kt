@@ -189,7 +189,7 @@ object AiBatch {
             val models = ModelManager(app)
             val whisper = AiModel.entries.firstOrNull { it.name == store.aiWhisperModel } ?: AiModel.WHISPER_TURBO
             if (!models.isReady(whisper)) return
-            val llm = if (store.aiTranslate && models.isReady(AiModel.QWEN3_4B)) models.file(AiModel.QWEN3_4B) else null
+            val llm = if (store.aiTranslate) AiModel.translator(models, live = false, preferFast = false)?.let { models.file(it) } else null
             val showMode = AiShowMode.entries.firstOrNull { it.name == store.aiShowMode } ?: AiShowMode.BOTH
             val key = PlaybackStore.get(app).keyFor(origin, entry)
             val url = server?.let { FtpStreamServer.urlFor(it, entry.path, entry.size) }

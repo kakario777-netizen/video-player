@@ -226,7 +226,7 @@ class AiSubtitleSession(
                 st == "소리 받는 중" -> "대기 · $pct"
                 else -> pct
             }
-            lines += "한글 번역" to tr
+            lines += "한글 번역 (${if (llmModel.name.contains("1.7B")) "1.7B" else "4B"})" to tr
         }
         decodeInfo?.let { lines += "영상 풀기" to it }
         // 테스트용: 직전 구간에서 단계별로 걸린 시간 (인식은 분석·글자로 나눠서)

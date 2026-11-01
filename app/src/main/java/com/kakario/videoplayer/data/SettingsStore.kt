@@ -187,6 +187,13 @@ class SettingsStore(context: Context) {
             prefs.edit().putString("ai_prewarm", value).apply()
         }
 
+    /** 재생하면서 볼 때는 빠른 번역 모델(Qwen3 1.7B)을 쓸지 (받아 둔 경우). */
+    var aiLiveFastTranslate: Boolean
+        get() = prefs.getBoolean("ai_live_fast_tr", true)
+        set(value) {
+            prefs.edit().putBoolean("ai_live_fast_tr", value).apply()
+        }
+
     /** 재생하면서 실시간으로 볼 때는 빠른 모델(small)을 쓸지 (받아 둔 경우). */
     var aiLiveFast: Boolean
         get() = prefs.getBoolean("ai_live_fast", true)

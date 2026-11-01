@@ -450,7 +450,9 @@ fun PlayerScreen(
     }
     DisposableEffect(key, aiOn) {
         if (!aiOn || !whisperReady) return@DisposableEffect onDispose { }
-        val llm = if (aiStore.aiTranslate && aiModels.isReady(AiModel.QWEN3_4B)) aiModels.file(AiModel.QWEN3_4B) else null
+        val llm = if (aiStore.aiTranslate) {
+            AiModel.translator(aiModels, live = true, preferFast = aiStore.aiLiveFastTranslate)?.let { aiModels.file(it) }
+        } else null
         // 번역 모델을 뒤에서 미리 열고 예열 (여유 메모리 4GB 이상일 때만) → 첫 번역부터 바로
         if (llm != null) com.kakario.videoplayer.ai.LlmHolder.prewarmIfWanted(context, "VIDEO")
         val session = AiSubtitleSession(

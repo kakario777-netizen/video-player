@@ -71,6 +71,7 @@ fun AiSubtitleSettings() {
     var dlError by remember { mutableStateOf<String?>(null) }
     var fastCpu by remember { mutableStateOf(store.aiFastCpu) }
     var liveFast by remember { mutableStateOf(store.aiLiveFast) }
+    var liveFastTr by remember { mutableStateOf(store.aiLiveFastTranslate) }
     var prewarm by remember { mutableStateOf(store.aiPrewarm) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -184,6 +185,39 @@ fun AiSubtitleSettings() {
                     onCancel = { models.cancel(AiModel.QWEN3_4B); tick++ },
                     onDelete = { deleteAsk = AiModel.QWEN3_4B },
                 )
+                ModelRow(
+                    model = AiModel.QWEN3_1_7B,
+                    state = remember(tick) { models.state(AiModel.QWEN3_1_7B) },
+                    selected = null,
+                    onSelect = {},
+                    onDownload = { startDownload(AiModel.QWEN3_1_7B) },
+                    onCancel = { models.cancel(AiModel.QWEN3_1_7B); tick++ },
+                    onDelete = { deleteAsk = AiModel.QWEN3_1_7B },
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .toggleable(value = liveFastTr, onValueChange = {
+                            liveFastTr = it
+                            store.aiLiveFastTranslate = it
+                        })
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("볼 때는 빠른 번역(1.7B)으로", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
+                        Text(
+                            if (models.isReady(AiModel.QWEN3_1_7B))
+                                "보면서는 1.7B로 재생을 따라가고, 미리 만들기는 더 자연스러운 4B를 써요"
+                            else
+                                "빠른 번역(1.7B)을 받아야 켜져요 — 4B만으로는 대사가 많을 때 번역이 늦어요",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (models.isReady(AiModel.QWEN3_1_7B)) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Switch(checked = liveFastTr, onCheckedChange = null)
+                }
             }
 
             // 번역 엔진 미리 준비(예열) 시점
@@ -220,7 +254,8 @@ fun AiSubtitleSettings() {
             }
 
             // 번역 시험: 영상 없이 번역 모델만 돌려서 결과와 걸린 시간을 보여준다
-            if (translate && models.isReady(AiModel.QWEN3_4B)) {
+            val testModel = AiModel.translator(models, live = true, preferFast = liveFastTr)
+            if (translate && testModel != null) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -238,7 +273,7 @@ fun AiSubtitleSettings() {
                                     } else {
                                         val t0 = System.currentTimeMillis()
                                         val threads = AiLibs.bigCores
-                                        val h = LlamaNative.init(models.file(AiModel.QWEN3_4B).path, 2048, threads)
+                                        val h = LlamaNative.init(models.file(testModel).path, 2048, threads)
                                         val tOpen = System.currentTimeMillis()
                                         if (h == 0L) {
                                             sb.append("번역 모델을 열지 못했어요 (${(tOpen - t0) / 1000}초)")
@@ -263,7 +298,7 @@ fun AiSubtitleSettings() {
                                                 val tg = if (st[3] > 0) st[1] * 1000.0 / st[3] else 0.0
                                                 return "입력 ${st[0]}토큰 ${st[2] / 1000.0}초(${pp}/초) · 생성 ${st[1]}토큰 ${st[3] / 1000.0}초(${String.format("%.1f", tg)}/초)"
                                             }
-                                            sb.append("모델 열기 ${(tOpen - t0) / 1000}초 · 예열 ${if (warm >= 0) "${warm / 1000.0}초" else "실패"} · 엔진 ${if (AiLibs.fastLoaded) "고성능(i8mm)" else "기본"} · 스레드 ${s1[4]}\n")
+                                            sb.append("번역 모델 ${if (testModel == AiModel.QWEN3_1_7B) "1.7B" else "4B"} · 모델 열기 ${(tOpen - t0) / 1000}초 · 예열 ${if (warm >= 0) "${warm / 1000.0}초" else "실패"} · 엔진 ${if (AiLibs.fastLoaded) "고성능(i8mm)" else "기본"} · 스레드 ${s1[4]}\n")
                                             sb.append("1회차 ${(t2 - t1) / 1000}초: ${speed(s1)}\n")
                                             sb.append("2회차 ${(t3 - t2) / 1000}초: ${speed(s2)}\n")
                                             sb.append("상태: ${r.info}\n")

@@ -101,8 +101,9 @@ object LlmHolder {
         if (`when` == "APP" && wanted != "APP") return
         if (!store.aiTranslate) return
         val models = ModelManager(context)
-        if (!models.isReady(AiModel.QWEN3_4B)) return
-        prewarm(context, models.file(AiModel.QWEN3_4B).path)
+        // 영상 볼 때 쓸 번역 모델을 예열
+        val m = AiModel.translator(models, live = true, preferFast = store.aiLiveFastTranslate) ?: return
+        prewarm(context, models.file(m).path)
     }
 
     /** 메모리가 넉넉하면 뒤에서 미리 열고 예열. */
