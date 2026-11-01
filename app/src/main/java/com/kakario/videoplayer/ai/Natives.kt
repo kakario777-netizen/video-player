@@ -20,6 +20,24 @@ object AiLibs {
         }.getOrDefault(false)
     }
 
+    /**
+     * 큰(빠른) 코어 수. 작은 절전 코어까지 쓰면 계산이 그 코어를 기다리느라 오히려 느려진다.
+     * 가장 빠른 코어의 70% 이상 속도인 코어만 센다 (예: 폴드5 5개, S24 울트라 6개).
+     */
+    val bigCores: Int by lazy {
+        runCatching {
+            val freqs = (0 until Runtime.getRuntime().availableProcessors()).mapNotNull { i ->
+                File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq").takeIf { it.exists() }
+                    ?.readText()?.trim()?.toLongOrNull()
+            }
+            val top = freqs.maxOrNull() ?: return@runCatching null
+            freqs.count { it >= top * 0.7 }
+        }.getOrNull()?.coerceIn(2, 6) ?: (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
+    }
+
+    /** 음성 인식과 번역이 동시에 CPU를 쓰면 서로 기다리느라 몇 배 느려져서, 한 번에 하나만. */
+    val compute = java.util.concurrent.locks.ReentrantLock()
+
     /** 실제로 고성능판이 불러와졌는지 (설정 화면 표시용). */
     @Volatile var fastLoaded: Boolean = false
         private set
@@ -40,7 +58,8 @@ object WhisperNative {
     val available: Boolean = AiLibs.load("whisper_jni")
 
     @JvmStatic external fun init(modelPath: String): Long
-    @JvmStatic external fun transcribe(handle: Long, pcm16k: FloatArray, language: String, threads: Int, beam: Boolean): ByteArray?
+    /** live = 보면서 만들기(빠르게: 재시도 끔, 한 줄 길이 제한). 첫 줄 = 언어\t분석ms\t글자ms\t글자수 */
+    @JvmStatic external fun transcribe(handle: Long, pcm16k: FloatArray, language: String, threads: Int, beam: Boolean, live: Boolean): ByteArray?
     @JvmStatic external fun abort(handle: Long)
     @JvmStatic external fun free(handle: Long)
 }

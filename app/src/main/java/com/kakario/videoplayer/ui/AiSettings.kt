@@ -237,7 +237,7 @@ fun AiSubtitleSettings() {
                                         sb.append("번역 엔진을 불러오지 못했어요")
                                     } else {
                                         val t0 = System.currentTimeMillis()
-                                        val threads = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
+                                        val threads = AiLibs.bigCores
                                         val h = LlamaNative.init(models.file(AiModel.QWEN3_4B).path, 2048, threads)
                                         val tOpen = System.currentTimeMillis()
                                         if (h == 0L) {

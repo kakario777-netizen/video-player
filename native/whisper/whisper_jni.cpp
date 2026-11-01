@@ -1,5 +1,6 @@
 // Whisper(음성 인식) JNI 연결부 — 폰 안에서만 동작, 네트워크 사용 없음
 #include <jni.h>
+#include <chrono>
 #include <atomic>
 #include <string>
 #include <vector>
@@ -25,6 +26,11 @@ static jbyteArray to_bytes(JNIEnv *env, const std::string &s) {
     jbyteArray arr = env->NewByteArray((jsize) s.size());
     env->SetByteArrayRegion(arr, 0, (jsize) s.size(), reinterpret_cast<const jbyte *>(s.data()));
     return arr;
+}
+
+static long long now_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -61,7 +67,7 @@ Java_com_kakario_videoplayer_ai_WhisperNative_free(JNIEnv *, jclass, jlong ptr) 
  */
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_com_kakario_videoplayer_ai_WhisperNative_transcribe(
-        JNIEnv *env, jclass, jlong ptr, jfloatArray jpcm, jstring jlang, jint threads, jboolean beam) {
+        JNIEnv *env, jclass, jlong ptr, jfloatArray jpcm, jstring jlang, jint threads, jboolean beam, jboolean live) {
     auto *h = reinterpret_cast<WhisperHandle *>(ptr);
     if (!h || !h->ctx) return nullptr;
     h->abort.store(false);
@@ -88,16 +94,44 @@ Java_com_kakario_videoplayer_ai_WhisperNative_transcribe(
     p.suppress_blank = true;
     p.suppress_nst = true;   // [음악] 같은 비음성 표시 줄이기
     if (beam) p.beam_search.beam_size = 5;
+    if (live) {
+        // 보면서 만들 때: 결과가 애매해도 다시 여러 번 풀어보지 않고(온도 올려 재시도 끔),
+        // 같은 말 반복에 빠져도 한 줄이 너무 길어지지 않게 끊는다 → 한 구간이 수십 초~수 분 걸리는 일 방지
+        p.temperature_inc = 0.0f;
+        p.greedy.best_of = 1;
+        p.max_tokens = 64;
+    }
     p.abort_callback = abort_cb;
     p.abort_callback_user_data = h;
+
+    // 걸린 시간 재기: 소리 분석(인코딩) / 글자 만들기(디코딩) / 만든 글자 수
+    struct Meter { long long t0 = 0, t_enc = 0, t_first = 0; long steps = 0; } m;
+    m.t0 = now_ms();
+    p.encoder_begin_callback = [](whisper_context *, whisper_state *, void *ud) -> bool {
+        auto *mm = static_cast<Meter *>(ud);
+        if (mm->t_enc == 0) mm->t_enc = now_ms();
+        return true;
+    };
+    p.encoder_begin_callback_user_data = &m;
+    p.logits_filter_callback = [](whisper_context *, whisper_state *, const whisper_token_data *, int, float *, void *ud) {
+        auto *mm = static_cast<Meter *>(ud);
+        if (mm->t_first == 0) mm->t_first = now_ms();
+        mm->steps++;
+    };
+    p.logits_filter_callback_user_data = &m;
 
     if (whisper_full(h->ctx, p, pcm.data(), (int) pcm.size()) != 0) {
         return nullptr;
     }
+    long long t_end = now_ms();
+    long long enc_ms = (m.t_first ? m.t_first : t_end) - (m.t_enc ? m.t_enc : m.t0);
+    long long dec_ms = m.t_first ? t_end - m.t_first : 0;
 
     std::string out;
     const char *detected = whisper_lang_str(whisper_full_lang_id(h->ctx));
     out += detected ? detected : "";
+    // 첫 줄: 언어 \t 인코딩ms \t 디코딩ms \t 글자(토큰) 단계 수
+    out += "\t" + std::to_string(enc_ms) + "\t" + std::to_string(dec_ms) + "\t" + std::to_string(m.steps);
     out += "\n";
     const int segs = whisper_full_n_segments(h->ctx);
     for (int i = 0; i < segs; ++i) {

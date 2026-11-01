@@ -54,13 +54,14 @@ object LlmHolder {
         }
     }
 
-    fun threads() = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
+    fun threads() = AiLibs.bigCores
 
     /** 모델을 (필요하면 열고 예열해서) 잠근 채 block 실행. 열기 실패면 block(0). */
     fun <T> use(modelPath: String, onOpening: () -> Unit = {}, block: (Long) -> T): T {
         main.removeCallbacks(releaser)
         synchronized(lock) {
             busy++
+            AiLibs.compute.lock()
             try {
                 if (handle != 0L && path != modelPath) {
                     LlamaNative.free(handle)
@@ -85,6 +86,7 @@ object LlmHolder {
                 }
                 return block(handle)
             } finally {
+                AiLibs.compute.unlock()
                 busy--
                 main.postDelayed(releaser, IDLE_MS)
             }

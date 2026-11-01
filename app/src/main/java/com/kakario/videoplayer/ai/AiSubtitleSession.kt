@@ -144,6 +144,9 @@ class AiSubtitleSession(
         private set
     var curWhisperMs by mutableLongStateOf(-1L)
         private set
+    /** 음성 인식 세부 (분석·글자 만들기 시간, 글자 수) — 테스트 표시용. */
+    var curWhisperDetail by mutableStateOf("")
+        private set
 
     /**
      * 오른쪽 위 3줄: 소리 받기 / 음성 인식 / 한글 번역 — 각 단계가 지금 어떤지.
@@ -164,11 +167,12 @@ class AiSubtitleSession(
         }
         val whisper = when {
             st == "음성 엔진 여는 중" -> "엔진 여는 중 ${el}초"
+            st == "음성 인식 차례 기다림" -> "번역 엔진 계산 끝나길 기다리는 중 ${el}초"
             st == "음성 인식 중" -> {
                 val left = ((whisperMs - (now - stageSince)) / 1000).coerceAtLeast(1)
                 "진행 중 ${el}초 · 약 ${left}초 남음"
             }
-            curWhisperMs >= 0 -> "완료 ${secs(curWhisperMs)}"
+            curWhisperMs >= 0 -> "완료 ${secs(curWhisperMs)}$curWhisperDetail"
             else -> "대기"
         }
         val lines = mutableListOf("소리 받기" to audio, "음성 인식 ($whisperName)" to whisper)
@@ -324,7 +328,7 @@ class AiSubtitleSession(
                     return@launch
                 }
                 durationMs = chunker.durationMs
-                val threads = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 6)
+                val threads = AiLibs.bigCores
 
                 while (isActive) {
                     val ph = playhead()
@@ -365,6 +369,7 @@ class AiSubtitleSession(
                     withContext(Dispatchers.Main) {
                         curAudioMs = -1L
                         curWhisperMs = -1L
+                        curWhisperDetail = ""
                     }
                     stage("소리 받는 중")
                     val aT0 = System.currentTimeMillis()
@@ -377,9 +382,18 @@ class AiSubtitleSession(
                         saveCache()
                         continue
                     }
+                    // 번역 엔진(예열 등)이 CPU를 쓰는 중이면 끝날 때까지 기다렸다가 (동시에 돌면 둘 다 몇 배 느려짐)
+                    if (!AiLibs.compute.tryLock()) {
+                        stage("음성 인식 차례 기다림")
+                        AiLibs.compute.lock()
+                    }
                     stage("음성 인식 중")
                     val wT0 = System.currentTimeMillis()
-                    val raw = WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", threads, false)
+                    val raw = try {
+                        WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", threads, false, !batch)
+                    } finally {
+                        AiLibs.compute.unlock()
+                    }
                     val whisperTook = System.currentTimeMillis() - wT0
                     withContext(Dispatchers.Main) { curWhisperMs = whisperTook }
                     whisperMs = (whisperMs * 0.6 + whisperTook * 0.4).toLong()
@@ -390,7 +404,13 @@ class AiSubtitleSession(
                         continue
                     }
                     val lines = String(raw, Charsets.UTF_8).split('\n')
-                    val detected = lines.firstOrNull()?.takeIf { it.isNotBlank() }
+                    val head = lines.firstOrNull().orEmpty().split('\t')
+                    val detected = head.getOrNull(0)?.takeIf { it.isNotBlank() }
+                    val encMs = head.getOrNull(1)?.toLongOrNull() ?: -1
+                    val decMs = head.getOrNull(2)?.toLongOrNull() ?: -1
+                    val steps = head.getOrNull(3)?.toLongOrNull() ?: -1
+                    val whisperDetail = if (encMs >= 0) " (분석 ${sec1(encMs)} · 글자 ${sec1(decMs)}, ${steps}개)" else ""
+                    withContext(Dispatchers.Main) { curWhisperDetail = whisperDetail }
                     val segs = lines.drop(1).mapNotNull { line ->
                         val p = line.split('\t', limit = 3)
                         if (p.size < 3) return@mapNotNull null
@@ -453,7 +473,7 @@ class AiSubtitleSession(
                     }
                     done += next
                     addTiming(
-                        "${mmss(startMs)} · 소리 ${sec1(audioTook)} · 인식 ${sec1(whisperTook)}" +
+                        "${mmss(startMs)} · 소리 ${sec1(audioTook)} · 인식 ${sec1(whisperTook)}$whisperDetail" +
                             (if (translateTook >= 0) " · 번역 ${sec1(translateTook)} (${segs.size}줄)" else "") +
                             " · 합계 ${sec1(System.currentTimeMillis() - chunkStartedAt)}"
                     )
