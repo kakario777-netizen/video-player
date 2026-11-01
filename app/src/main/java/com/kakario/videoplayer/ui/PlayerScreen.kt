@@ -1079,6 +1079,11 @@ fun PlayerScreen(
                                     aiSession?.language?.let { SheetNote("감지한 언어: ${langLabel(it)}") }
                                     aiSession?.translateInfo?.let { SheetNote("번역 상태: $it") }
                                     aiSession?.let { SheetNote("음성 인식 모델: ${it.whisperName}") }
+                                    // 테스트용: 재생 화면에서 바로 음성 인식 속도 재기 (설정의 측정과 비교)
+                                    aiSession?.let { ai ->
+                                        SheetOption("음성 인식 속도 지금 재 보기", selected = false) { ai.benchNow() }
+                                        ai.benchResult?.let { SheetNote(it) }
+                                    }
                                     // 구간별 걸린 시간 (최근 것부터) — 어디가 느린지 확인용
                                     aiSession?.timings?.let { list ->
                                         SheetNote(if (list.isEmpty()) "구간별 걸린 시간: 아직 끝난 구간이 없어요" else "구간별 걸린 시간 (최근 것부터)")

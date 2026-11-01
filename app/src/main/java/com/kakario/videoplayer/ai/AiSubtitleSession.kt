@@ -96,6 +96,34 @@ class AiSubtitleSession(
     @Volatile var decodeInfo: String? = null
     private fun curThreads() = if (threadOverride > 0) threadOverride else AiLibs.bigCores
 
+    /** 재생 화면 안에서 바로 재 보는 음성 인식 속도 (설정의 측정과 같은 방법). */
+    var benchResult by mutableStateOf<String?>(null)
+    fun benchNow() {
+        if (benchResult?.endsWith("…") == true) return
+        benchResult = "측정 차례 기다리는 중…"
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
+            val t = curThreads()
+            AiLibs.compute.lock()
+            try {
+                benchResult = "측정 중 (코어 ${t}개)…"
+                val h = WhisperNative.init(whisperModel.path)
+                if (h == 0L) {
+                    benchResult = "측정 실패 (모델 열기)"
+                } else {
+                    val rnd = java.util.Random(1)
+                    val pcm = FloatArray(16_000 * 30) { (rnd.nextFloat() - 0.5f) * 0.01f }
+                    val raw = WhisperNative.transcribe(h, pcm, "en", t, false, true)
+                    val enc = raw?.let { String(it, Charsets.UTF_8).substringBefore('\n').split('\t').getOrNull(1)?.toLongOrNull() }
+                    WhisperNative.free(h)
+                    benchResult = "재생 화면에서 측정: 분석 ${enc?.let { sec1(it) } ?: "?"} (코어 ${t}개, ${if (playerPaused) "멈춤" else "재생 중"})"
+                }
+            } finally {
+                AiLibs.compute.unlock()
+            }
+        }, "ai-bench-live").start()
+    }
+
     /** 언어 투표 (구간마다 감지한 언어) / 아직 언어를 못 정했을 때 다른 언어로 만든 구간. */
     private val langVotes = HashMap<String, Int>()
     private val wrongLangChunks = HashMap<Int, String>()
