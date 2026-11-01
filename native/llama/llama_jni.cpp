@@ -234,3 +234,12 @@ Java_com_kakario_videoplayer_ai_LlamaNative_warmup(JNIEnv *env, jclass, jlong pt
     if (eval_tokens(h, toks) < 0) return -1;
     return now_ms() - t0;
 }
+
+/** 계산에 쓸 코어 수 바꾸기 (영상 재생 중엔 줄여서 재생과 CPU를 덜 다툼). */
+extern "C" JNIEXPORT void JNICALL
+Java_com_kakario_videoplayer_ai_LlamaNative_setThreads(JNIEnv *, jclass, jlong ptr, jint n) {
+    auto *h = reinterpret_cast<LlmHandle *>(ptr);
+    if (!h || n <= 0 || h->threads == n) return;
+    llama_set_n_threads(h->ctx, n, n);
+    h->threads = n;
+}

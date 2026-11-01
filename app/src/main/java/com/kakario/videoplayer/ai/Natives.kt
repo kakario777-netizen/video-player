@@ -74,6 +74,8 @@ object LlamaNative {
     @JvmStatic external fun lastStats(handle: Long): LongArray
     /** 번역 지시문을 미리 넣어 두기 (예열). 걸린 ms, 실패 -1. */
     @JvmStatic external fun warmup(handle: Long, sys: ByteArray): Long
+    /** 계산 코어 수 바꾸기 (재생 중엔 줄임). */
+    @JvmStatic external fun setThreads(handle: Long, n: Int)
     @JvmStatic external fun abort(handle: Long)
     @JvmStatic external fun free(handle: Long)
 }

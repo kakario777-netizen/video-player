@@ -87,6 +87,15 @@ class AiSubtitleSession(
         private set
     private var workSince = 0L
 
+    /**
+     * 계산에 쓸 코어 수 (0 = 빠른 코어 전부). 영상이 재생 중이면 재생 화면이 줄여서 넣어 준다 —
+     * AI 계산은 코어들이 박자를 맞춰 일해서, 영상 풀기와 코어를 다투면 몇~수십 배 느려진다.
+     */
+    @Volatile var threadOverride = 0
+    /** 테스트 표시용: 영상 풀기 방식 (하드웨어/소프트웨어). */
+    @Volatile var decodeInfo: String? = null
+    private fun curThreads() = if (threadOverride > 0) threadOverride else AiLibs.bigCores
+
     /** 재생 화면이 일시정지 중인지 — 멈춰 있으면 지금 위치부터 먼저 만든다. */
     @Volatile var playerPaused = false
 
@@ -175,7 +184,7 @@ class AiSubtitleSession(
             curWhisperMs >= 0 -> "완료 ${secs(curWhisperMs)}$curWhisperDetail"
             else -> "대기"
         }
-        val lines = mutableListOf("소리 받기" to audio, "음성 인식 ($whisperName)" to whisper)
+        val lines = mutableListOf("소리 받기" to audio, "음성 인식 ($whisperName · ${curThreads()}코어)" to whisper)
         if (llmModel != null && language != "ko") {
             val pct = "전체 ${(progress * 100).toInt()}%"
             val tr = when {
@@ -187,6 +196,7 @@ class AiSubtitleSession(
             }
             lines += "한글 번역" to tr
         }
+        decodeInfo?.let { lines += "영상 풀기" to it }
         // 테스트용: 직전 구간에서 단계별로 걸린 시간 (인식은 분석·글자로 나눠서)
         timings.firstOrNull()?.let { lines += "직전 구간" to it }
         // 테스트용: FTP 영상이면 중계 접속 기록 한 줄 더
@@ -399,7 +409,7 @@ class AiSubtitleSession(
                     stage("음성 인식 중")
                     val wT0 = System.currentTimeMillis()
                     val raw = try {
-                        WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", threads, false, !batch)
+                        WhisperNative.transcribe(whisperHandle, pcm, language ?: "auto", curThreads(), false, !batch)
                     } finally {
                         AiLibs.compute.unlock()
                     }
@@ -552,6 +562,7 @@ class AiSubtitleSession(
                 segs.chunked(8).forEach { group ->
                     val context = cues.filter { it.startMs < group.first().startMs }.takeLast(3).map { it.text }
                     val t0 = System.currentTimeMillis()
+                    LlamaNative.setThreads(h, curThreads())
                     val r = AiTranslator.translate(h, group.map { it.text }, context, language)
                     translateInfo = "${r.info} · ${group.size}줄 ${(System.currentTimeMillis() - t0) / 1000}초"
                     group.forEachIndexed { i, c -> out += c.copy(ko = r.ko.getOrNull(i)) }

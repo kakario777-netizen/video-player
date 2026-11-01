@@ -721,6 +721,14 @@ fun PlayerScreen(
                 }
             }
             ai.playerPaused = !playing
+            // 재생 중엔 AI가 코어를 덜 써서 영상 풀기와 다투지 않게 (멈추면 다시 전부)
+            val big = com.kakario.videoplayer.ai.AiLibs.bigCores
+            ai.threadOverride = when {
+                !playing -> 0
+                softwareDecoding -> 2
+                else -> (big - 2).coerceAtLeast(2)
+            }
+            ai.decodeInfo = if (softwareDecoding) "소프트웨어 (CPU 많이 씀)" else "하드웨어"
             val small = when {
                 ai.notice != null -> ai.notice
                 ai.korean -> null
