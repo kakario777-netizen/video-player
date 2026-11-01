@@ -723,10 +723,11 @@ fun PlayerScreen(
             ai.playerPaused = !playing
             // 재생 중엔 AI가 코어를 덜 써서 영상 풀기와 다투지 않게 (멈추면 다시 전부)
             val big = com.kakario.videoplayer.ai.AiLibs.bigCores
+            // 하드웨어로 영상을 풀면 CPU를 거의 안 쓰므로 AI가 빠른 코어를 전부 쓴다
             ai.threadOverride = when {
                 !playing -> 0
-                softwareDecoding -> 2
-                else -> (big - 2).coerceAtLeast(2)
+                softwareDecoding -> (big - 2).coerceAtLeast(2)
+                else -> 0
             }
             ai.decodeInfo = if (softwareDecoding) "소프트웨어 (CPU 많이 씀)" else "하드웨어"
             val small = when {
