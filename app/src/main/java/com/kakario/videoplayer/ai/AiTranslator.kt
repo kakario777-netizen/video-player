@@ -24,7 +24,7 @@ object AiTranslator {
         else -> "외국어"
     }
 
-    fun translate(handle: Long, lines: List<String>, context: List<String>, lang: String?): Result {
+    fun translate(handle: Long, lines: List<String>, context: List<String>, lang: String?, cancelled: () -> Boolean = { false }): Result {
         if (lines.isEmpty()) return Result(emptyList(), "번역할 줄 없음")
         val sys = SYS
         val user = buildString {
@@ -40,18 +40,19 @@ object AiTranslator {
         val maxTokens = (lines.sumOf { it.length } * 3 + 64).coerceIn(128, 1000)
         val raw = LlamaNative.generate(handle, sys.toByteArray(), user.toByteArray(), PREFILL.toByteArray(), maxTokens)
             ?: return Result(List(lines.size) { null }, "번역 엔진이 답을 못 냈어요 (엔진 오류)")
+        if (cancelled()) return Result(List(lines.size) { null }, "중단됨")
         val text = clean(String(raw, Charsets.UTF_8))
         val parsed = parseNumbered(text, lines.size)
         if (parsed.count { it != null } >= (lines.size + 1) / 2) {
             // 절반 이상 맞으면 빠진 줄만 한 줄씩 다시
-            val fixed = parsed.mapIndexed { i, v -> v ?: translateOne(handle, lines[i], lang) }
+            val fixed = parsed.mapIndexed { i, v -> v ?: if (cancelled()) null else translateOne(handle, lines[i], lang) }
             return Result(fixed, "정상")
         }
         // 번호 없이 줄 수만 맞게 나온 경우
         val plain = text.lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (plain.size == lines.size) return Result(plain, "정상 (번호 없음)")
         // 형식이 이상하면 한 줄씩
-        val one = lines.map { translateOne(handle, it, lang) }
+        val one = lines.map { if (cancelled()) null else translateOne(handle, it, lang) }
         val head = text.replace('\n', ' ').take(40)
         return Result(one, if (one.any { it != null }) "한 줄씩 번역함 (묶음 응답 형식 이상: \"$head\")" else "번역 실패 (응답: \"$head\")")
     }

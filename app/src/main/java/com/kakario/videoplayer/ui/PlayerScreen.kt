@@ -844,6 +844,53 @@ fun PlayerScreen(
             }
         }
 
+        // ── 꼼꼼한 재번역 전환 안내 (화면 가운데, 반짝반짝)
+        //   일시정지 → "3초 뒤 꼼꼼한 재번역이 시작됩니다" / 다시 재생 → "3초 뒤 실시간 번역이 다시 시작됩니다"
+        aiSession?.takeIf { !inPip }?.let { ai ->
+            var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    tick = System.currentTimeMillis()
+                    delay(200)
+                }
+            }
+            val msg = when {
+                tick < ai.resumeNoticeUntil -> {
+                    val left = ((ai.resumeNoticeUntil - tick + 999) / 1000).coerceAtLeast(1)
+                    "${left}초 뒤 실시간 번역이 다시 시작됩니다…"
+                }
+                !playing && !ai.upgrading && ai.pausedSince > 0 && ai.hasUpgradeWork() -> {
+                    val left = ((AiSubtitleSession.PAUSE_UPGRADE_DELAY_MS - (tick - ai.pausedSince) + 999) / 1000)
+                    if (left > 0) "${left}초 뒤 꼼꼼한 재번역이 시작됩니다" else null
+                }
+                else -> null
+            }
+            if (msg != null) {
+                val blink = androidx.compose.animation.core.rememberInfiniteTransition(label = "blink")
+                val alpha by blink.animateFloat(
+                    initialValue = 0.45f,
+                    targetValue = 1f,
+                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                        androidx.compose.animation.core.tween(500),
+                        androidx.compose.animation.core.RepeatMode.Reverse,
+                    ),
+                    label = "blinkAlpha",
+                )
+                Text(
+                    msg,
+                    color = Color.White.copy(alpha = alpha),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(top = 120.dp)
+                        .background(Color(0x88000000), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
+
         // ── 잠금 상태: 탭하면 잠금 해제 버튼만 잠깐
         if (locked) {
             AnimatedVisibility(

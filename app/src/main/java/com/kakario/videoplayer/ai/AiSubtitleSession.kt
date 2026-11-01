@@ -191,8 +191,38 @@ class AiSubtitleSession(
     private val langVotes = HashMap<String, Int>()
     private val wrongLangChunks = HashMap<Int, String>()
 
-    /** 재생 화면이 일시정지 중인지 — 멈춰 있으면 지금 위치부터 먼저 만든다. */
+    /**
+     * 재생 화면이 일시정지 중인지 — 멈춰 있으면 지금 위치부터 먼저 만든다.
+     * 멈춘 지 3초가 지나면 꼼꼼한 재번역을 시작하고, 다시 재생하면 재번역을 멈추고 실시간으로 돌아간다.
+     */
     @Volatile var playerPaused = false
+        set(value) {
+            if (value == field) return
+            field = value
+            val now = System.currentTimeMillis()
+            if (value) {
+                pausedSince = now
+            } else {
+                // 다시 재생: 앞서간 거리가 넉넉하지 않으면 하던 재번역을 멈추고 실시간 번역으로
+                if (upgrading && readyUntilMs - lastPlayhead < UPGRADE_LEAD_MS) {
+                    upgradeAbort = true
+                    bestWhisperHandle.takeIf { it != 0L }?.let { WhisperNative.abort(it) }
+                    if (bestWhisper == null || bestWhisper == whisperModel) whisperHandle.takeIf { it != 0L }?.let { WhisperNative.abort(it) }
+                    LlmHolder.abort()
+                    resumeNoticeUntil = now + 3_000
+                }
+            }
+        }
+    /** 멈춘 시각 (3초 기다렸다가 재번역 시작). */
+    @Volatile var pausedSince = 0L
+        private set
+    /** 다시 재생했을 때 '실시간 번역이 다시 시작됩니다' 안내를 보여줄 때까지. */
+    @Volatile var resumeNoticeUntil = 0L
+        private set
+    @Volatile private var upgradeAbort = false
+    @Volatile private var lastPlayhead = 0L
+    /** 일시정지했을 때 꼼꼼한 재번역할 구간이 남아 있는지 (가운데 안내용). */
+    fun hasUpgradeWork(): Boolean = !korean && failed == null && upgradeCandidate() != null
 
     /** 단계별 평균 걸린 시간 (따로 재야 남은 시간이 정확함). */
     @Volatile private var whisperMs = if (whisperModel.name.contains("small")) 10_000L else 30_000L
@@ -447,6 +477,7 @@ class AiSubtitleSession(
 
                 while (isActive) {
                     val ph = playhead()
+                    lastPlayhead = ph
                     updateReady(ph)
                     val first = (ph / CHUNK_MS).toInt()
                     val last = if (durationMs > 0) ((durationMs - 1) / CHUNK_MS).toInt() else first + LOOKAHEAD
@@ -461,7 +492,8 @@ class AiSubtitleSession(
                     if (!batch) {
                         val cand = upgradeCandidate()
                         val lead = readyUntilMs - ph
-                        if (cand != null && (next == null || playerPaused || lead >= UPGRADE_LEAD_MS)) {
+                        val pausedLongEnough = playerPaused && System.currentTimeMillis() - pausedSince >= PAUSE_UPGRADE_DELAY_MS
+                        if (cand != null && (next == null || pausedLongEnough || lead >= UPGRADE_LEAD_MS)) {
                             upgradeOne(chunker, cand)
                             continue
                         }
@@ -673,6 +705,7 @@ class AiSubtitleSession(
     /** 구간 하나를 좋은 모델(인식 turbo 등 + 번역 4B)로 다시 만들어 바꿔 끼운다. */
     private suspend fun upgradeOne(chunker: AudioSource, idx: Int) {
         val startMs = idx * CHUNK_MS
+        upgradeAbort = false
         withContext(Dispatchers.Main) { upgrading = true }
         try {
             val pcm = chunker.read(startMs, CHUNK_MS) ?: run { perfect += idx; return }
@@ -693,7 +726,7 @@ class AiSubtitleSession(
             } finally {
                 AiLibs.compute.unlock()
             }
-            if (raw == null) return
+            if (raw == null || upgradeAbort) return
             val lines = String(raw, Charsets.UTF_8).split('\n')
             val segs = lines.drop(1).mapNotNull { line ->
                 val p = line.split('\t', limit = 3)
@@ -705,6 +738,7 @@ class AiSubtitleSession(
                 AiCue(startMs + t0, startMs + minOf(t1, CHUNK_MS).coerceAtLeast(t0 + 500), text, null)
             }
             val translated = if (segs.isNotEmpty() && (bestLlm ?: llmModel) != null) translate(segs, language, bestLlm ?: llmModel) else segs
+            if (upgradeAbort) return // 다시 재생해서 중간에 멈춤 → 이 구간은 다음 여유 때 다시
             withContext(Dispatchers.Main) {
                 cues = (cues.filter { it.startMs < startMs || it.startMs >= startMs + CHUNK_MS } + translated)
                     .sortedBy { it.startMs }
@@ -741,11 +775,13 @@ class AiSubtitleSession(
             }
             llmHandle = h
             try {
+                val isUpgrade = model != llmModel
                 segs.chunked(8).forEach { group ->
+                    if (isUpgrade && upgradeAbort) return@forEach
                     val context = cues.filter { it.startMs < group.first().startMs }.takeLast(3).map { it.text }
                     val t0 = System.currentTimeMillis()
                     LlamaNative.setThreads(h, curThreads())
-                    val r = AiTranslator.translate(h, group.map { it.text }, context, lang)
+                    val r = AiTranslator.translate(h, group.map { it.text }, context, lang) { isUpgrade && upgradeAbort }
                     translateInfo = "${r.info} · ${group.size}줄 ${(System.currentTimeMillis() - t0) / 1000}초"
                     group.forEachIndexed { i, c -> out += c.copy(ko = r.ko.getOrNull(i)) }
                 }
@@ -754,7 +790,7 @@ class AiSubtitleSession(
             }
         }
         if (translateBroken) return segs
-        if (out.none { it.ko != null }) notice = "번역이 안 됐어요: $translateInfo"
+        if (out.none { it.ko != null } && !upgradeAbort) notice = "번역이 안 됐어요: $translateInfo"
         return out
     }
 
@@ -855,7 +891,9 @@ class AiSubtitleSession(
     companion object {
         const val CHUNK_MS = 30_000L
         /** 지금 위치보다 이만큼 앞서 있으면 남는 시간에 꼼꼼한 재번역을 한다. */
-        private const val UPGRADE_LEAD_MS = 150_000L
+        private const val UPGRADE_LEAD_MS = 300_000L
+        /** 일시정지하고 이만큼 지나야 꼼꼼한 재번역 시작. */
+        const val PAUSE_UPGRADE_DELAY_MS = 3_000L
         /** 지금 위치에서 몇 덩어리(30초)까지 미리 만들지 = 10분. */
         private const val LOOKAHEAD = 20
         private const val SILENCE = 0.004f
