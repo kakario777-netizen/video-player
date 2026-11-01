@@ -766,8 +766,8 @@ fun PlayerScreen(
                                         label,
                                         color = Color.White.copy(alpha = if (active) 0.95f else 0.6f),
                                         fontSize = 11.sp,
-                                        modifier = Modifier.width(92.dp),
-                                        maxLines = 1,
+                                        modifier = Modifier.width(96.dp),
+                                        maxLines = 2,
                                     )
                                     Text(
                                         value,

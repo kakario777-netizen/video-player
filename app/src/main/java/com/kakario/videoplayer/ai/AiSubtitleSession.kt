@@ -96,6 +96,10 @@ class AiSubtitleSession(
     @Volatile var decodeInfo: String? = null
     private fun curThreads() = if (threadOverride > 0) threadOverride else AiLibs.bigCores
 
+    /** 언어 투표 (구간마다 감지한 언어) / 아직 언어를 못 정했을 때 다른 언어로 만든 구간. */
+    private val langVotes = HashMap<String, Int>()
+    private val wrongLangChunks = HashMap<Int, String>()
+
     /** 재생 화면이 일시정지 중인지 — 멈춰 있으면 지금 위치부터 먼저 만든다. */
     @Volatile var playerPaused = false
 
@@ -437,11 +441,16 @@ class AiSubtitleSession(
                         val t1 = p[1].toLongOrNull() ?: return@mapNotNull null
                         val text = p[2].trim()
                         if (text.isEmpty() || isHallucination(text)) return@mapNotNull null
-                        AiCue(startMs + t0, startMs + minOf(t1, CHUNK_MS).coerceAtLeast(t0 + 500), text, null)
+                        val clean = collapseRepeats(text)
+                        if (clean.isEmpty()) return@mapNotNull null
+                        AiCue(startMs + t0, startMs + minOf(t1, CHUNK_MS).coerceAtLeast(t0 + 500), clean, null)
                     }
-                    // 언어 판단: 말소리가 있는 덩어리에서만. 서로 다른 두 덩어리가 한국어면 한국어 영상 → 자막 안 만듦
-                    if (language == null && segs.isNotEmpty() && detected != null) {
-                        if (detected == "ko") {
+                    // 일본어 글자(히라가나·가타카나)가 보이면 일본어로 본다 (노래·효과음 때문에 영어로 잘못 판단하는 것 방지)
+                    val chunkDetected = if (segs.any { c -> c.text.any { it in '\u3040'..'\u30ff' } }) "ja" else detected
+                    // 언어 판단: 말소리가 있는 덩어리에서만, 여러 구간 투표로 정한다
+                    // (첫 구간이 오프닝 노래면 영어 등으로 잘못 고정되는 문제 → 같은 언어가 2번 나오고 과반일 때 고정)
+                    if (language == null && segs.isNotEmpty() && chunkDetected != null) {
+                        if (chunkDetected == "ko") {
                             if (firstKoreanChunk >= 0 && firstKoreanChunk != next) {
                                 korean = true
                                 status = null
@@ -455,12 +464,20 @@ class AiSubtitleSession(
                             done += next
                             continue
                         } else {
-                            language = detected
-                            // 앞에서 한국어로 잘못 들은 덩어리는 다시 만들기
-                            if (firstKoreanChunk >= 0) done -= firstKoreanChunk
+                            langVotes[chunkDetected] = (langVotes[chunkDetected] ?: 0) + 1
+                            val n = langVotes[chunkDetected]!!
+                            if (n >= 2 && n * 2 > langVotes.values.sum()) {
+                                language = chunkDetected
+                                // 앞에서 한국어로 잘못 들은 덩어리, 다른 언어로 잘못 판단한 덩어리는 다시 만들기
+                                if (firstKoreanChunk >= 0) done -= firstKoreanChunk
+                                wrongLangChunks.filter { it.value != chunkDetected }.keys.forEach { done -= it }
+                            } else {
+                                wrongLangChunks[next] = chunkDetected
+                            }
                         }
                     }
-                    if (language == null) {
+                    val chunkLang = language ?: chunkDetected
+                    if (chunkLang == null || segs.isEmpty()) {
                         // 아직 말소리가 없음 (음악·효과음 등)
                         done += next
                         continue
@@ -474,11 +491,11 @@ class AiSubtitleSession(
                         }
                     }
                     var translateTook = -1L
-                    val translated = if (llmModel != null && language != null && language != "ko" && segs.isNotEmpty()) {
+                    val translated = if (llmModel != null && chunkLang != "ko" && segs.isNotEmpty()) {
                         stage("번역 중")
                         val tT0 = System.currentTimeMillis()
                         val wasOpen = LlmHolder.isOpen
-                        translate(segs).also {
+                        translate(segs, chunkLang).also {
                             stage(null)
                             // 예열 시간이 섞인 첫 번역은 빼고 평균
                             translateTook = System.currentTimeMillis() - tT0
@@ -541,7 +558,7 @@ class AiSubtitleSession(
         private set
     @Volatile private var translateBroken = false
 
-    private fun translate(segs: List<AiCue>): List<AiCue> {
+    private fun translate(segs: List<AiCue>, lang: String?): List<AiCue> {
         if (llmModel == null) return segs
         if (!LlamaNative.available) {
             translateInfo = "번역 엔진을 불러오지 못했어요"
@@ -563,7 +580,7 @@ class AiSubtitleSession(
                     val context = cues.filter { it.startMs < group.first().startMs }.takeLast(3).map { it.text }
                     val t0 = System.currentTimeMillis()
                     LlamaNative.setThreads(h, curThreads())
-                    val r = AiTranslator.translate(h, group.map { it.text }, context, language)
+                    val r = AiTranslator.translate(h, group.map { it.text }, context, lang)
                     translateInfo = "${r.info} · ${group.size}줄 ${(System.currentTimeMillis() - t0) / 1000}초"
                     group.forEachIndexed { i, c -> out += c.copy(ko = r.ko.getOrNull(i)) }
                 }
@@ -577,6 +594,18 @@ class AiSubtitleSession(
     }
 
     // ───────────────────────────── 기타
+
+    /**
+     * 같은 말이 계속 반복되는 인식 오류 줄이기.
+     * 예) "of the day of the day of the day …" → "of the day", "ありがとうありがとうありがとう" → "ありがとう"
+     */
+    private fun collapseRepeats(t: String): String {
+        var s = t.trim()
+        repeat(3) {
+            s = Regex("""(.{2,40}?)(?:\s*\1){3,}""").replace(s) { it.groupValues[1] }
+        }
+        return s.trim()
+    }
 
     private fun sec1(ms: Long) = String.format("%.1f초", ms / 1000.0)
 

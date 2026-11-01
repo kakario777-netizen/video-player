@@ -304,6 +304,7 @@ fun AiSubtitleSettings() {
                         onClick = {
                             benchRunning = true
                             benchResult = "측정 준비 중… (영상은 끄고 기다려 주세요)"
+                            val ctx = context.applicationContext
                             Thread({
                                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
                                 val sb = StringBuilder()
@@ -331,6 +332,21 @@ fun AiSubtitleSettings() {
                                             val head = raw?.let { String(it, Charsets.UTF_8).substringBefore('\n').split('\t') }
                                             val enc = head?.getOrNull(1)?.toLongOrNull()
                                             sb.append("스레드 ${t}개: 분석 ${enc?.let { "%.1f초".format(it / 1000.0) } ?: "?"} · 전체 ${"%.1f초".format(total / 1000.0)}\n")
+                                        }
+                                        // 번역 모델(2.5GB)을 메모리에 올린 상태에서 한 번 더 — 메모리가 부족해 느려지는지 확인
+                                        if (models.isReady(AiModel.QWEN3_4B)) {
+                                            val free0 = com.kakario.videoplayer.ai.LlmHolder.freeMemory(ctx) / (1024 * 1024)
+                                            benchResult = sb.toString() + "번역 모델 올리는 중…"
+                                            com.kakario.videoplayer.ai.LlmHolder.use(models.file(AiModel.QWEN3_4B).path) { lh ->
+                                                val free1 = com.kakario.videoplayer.ai.LlmHolder.freeMemory(ctx) / (1024 * 1024)
+                                                benchResult = sb.toString() + "번역 모델 올린 상태로 측정 중…"
+                                                val t0 = System.currentTimeMillis()
+                                                val raw = WhisperNative.transcribe(h, pcm, "en", AiLibs.bigCores, false, true)
+                                                val total = System.currentTimeMillis() - t0
+                                                val enc = raw?.let { String(it, Charsets.UTF_8).substringBefore('\n').split('\t').getOrNull(1)?.toLongOrNull() }
+                                                sb.append("번역 모델 올린 상태(스레드 ${AiLibs.bigCores}개): 분석 ${enc?.let { "%.1f초".format(it / 1000.0) } ?: "?"} · 전체 ${"%.1f초".format(total / 1000.0)}\n")
+                                                sb.append("여유 메모리: 올리기 전 ${free0}MB → 올린 뒤 ${free1}MB${if (lh == 0L) " (번역 모델 열기 실패)" else ""}\n")
+                                            }
                                         }
                                         WhisperNative.free(h)
                                         sb.append("(정상이라면 small 기준 분석이 몇 초 이내)")
