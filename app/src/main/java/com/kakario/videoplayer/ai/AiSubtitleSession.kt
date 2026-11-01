@@ -187,6 +187,8 @@ class AiSubtitleSession(
             }
             lines += "한글 번역" to tr
         }
+        // 테스트용: 직전 구간에서 단계별로 걸린 시간 (인식은 분석·글자로 나눠서)
+        timings.firstOrNull()?.let { lines += "직전 구간" to it }
         // 테스트용: FTP 영상이면 중계 접속 기록 한 줄 더
         if (isUrl) {
             FtpStreamServer.statLine("AI")?.let { lines += "FTP (AI)" to it }

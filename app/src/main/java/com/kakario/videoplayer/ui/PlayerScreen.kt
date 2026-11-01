@@ -1062,7 +1062,10 @@ fun PlayerScreen(
                                     aiSession?.translateInfo?.let { SheetNote("번역 상태: $it") }
                                     aiSession?.let { SheetNote("음성 인식 모델: ${it.whisperName}") }
                                     // 구간별 걸린 시간 (최근 것부터) — 어디가 느린지 확인용
-                                    aiSession?.timings?.forEach { SheetNote(it) }
+                                    aiSession?.timings?.let { list ->
+                                        SheetNote(if (list.isEmpty()) "구간별 걸린 시간: 아직 끝난 구간이 없어요" else "구간별 걸린 시간 (최근 것부터)")
+                                        list.forEach { SheetNote(it) }
+                                    }
                                     AiShowMode.entries.forEach { m ->
                                         SheetOption(m.label, selected = aiShow == m) {
                                             aiShow = m
