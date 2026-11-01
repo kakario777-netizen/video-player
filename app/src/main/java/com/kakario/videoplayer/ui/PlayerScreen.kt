@@ -18,6 +18,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -870,8 +871,8 @@ fun PlayerScreen(
                 val alpha by blink.animateFloat(
                     initialValue = 0.45f,
                     targetValue = 1f,
-                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                        androidx.compose.animation.core.tween(500),
+                    animationSpec = androidx.compose.animation.core.infiniteRepeatable<Float>(
+                        androidx.compose.animation.core.tween<Float>(500),
                         androidx.compose.animation.core.RepeatMode.Reverse,
                     ),
                     label = "blinkAlpha",
