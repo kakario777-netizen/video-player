@@ -240,9 +240,11 @@ fun PlayerScreen(
 
     // 화면 가운데 잠깐 뜨는 안내 (건너뛰기·밝기·볼륨 등)
     var hint by remember { mutableStateOf<String?>(null) }
+    var hintIcon by remember { mutableStateOf<androidx.compose.ui.graphics.vector.ImageVector?>(null) }
     var hintKey by remember { mutableIntStateOf(0) }
     var hintSticky by remember { mutableStateOf(false) } // 끄는 동안엔 계속 표시
-    fun showHint(text: String, sticky: Boolean = false) {
+    fun showHint(text: String, sticky: Boolean = false, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) {
+        hintIcon = icon
         hint = text
         hintSticky = sticky
         hintKey++
@@ -647,13 +649,13 @@ fun PlayerScreen(
                                     activity?.window?.let { w ->
                                         w.attributes = w.attributes.apply { screenBrightness = v }
                                     }
-                                    showHint("☀ 밝기 ${(v * 100).roundToInt()}%", sticky = true)
+                                    showHint("밝기 ${(v * 100).roundToInt()}%", sticky = true, icon = LineIcons.Sun)
                                 }
                                 DragMode.VOLUME -> {
                                     val v = (startVolume - total.y / (size.height * 0.8f) * maxVolume)
                                         .roundToInt().coerceIn(0, maxVolume)
                                     audio.setStreamVolume(AudioManager.STREAM_MUSIC, v, 0)
-                                    showHint("🔊 볼륨 $v / $maxVolume", sticky = true)
+                                    showHint("볼륨 $v / $maxVolume", sticky = true, icon = LineIcons.Volume)
                                 }
                                 null -> Unit
                             }
@@ -798,17 +800,25 @@ fun PlayerScreen(
         }
 
         hint?.takeIf { !inPip }?.let {
-            Text(
-                it,
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
+            Row(
+                Modifier
                     .align(Alignment.Center)
                     .background(Color(0x99000000), RoundedCornerShape(12.dp))
                     .padding(horizontal = 18.dp, vertical = 10.dp),
-            )
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                hintIcon?.let { ic ->
+                    LineIcon(ic, size = 24.dp, tint = Color.White)
+                    Spacer(Modifier.width(10.dp))
+                }
+                Text(
+                    it,
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
 
         // ── 잠금 상태: 탭하면 잠금 해제 버튼만 잠깐
@@ -822,7 +832,7 @@ fun PlayerScreen(
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(start = 24.dp),
             ) {
-                RoundButton("🔓", 56) {
+                RoundButton("", 56, icon = LineIcons.Unlock) {
                     locked = false
                     lockHintVisible = false
                     controlsVisible = true
@@ -868,11 +878,11 @@ fun PlayerScreen(
                     TopChip(speedLabel(speed)) { sheet = Sheet.SPEED; interaction++ }
                     TopChip("화면") { sheet = Sheet.ASPECT; interaction++ }
                     if (prefs.lockButton) {
-                        TopChip("🔒") {
+                        TopChip("", icon = LineIcons.Lock) {
                             locked = true
                             sheet = null
                             lockHintVisible = true
-                            showHint("화면 잠금 — 탭해서 🔓 누르면 풀려요")
+                            showHint("화면 잠금 — 화면을 탭한 뒤 왼쪽 잠금 해제 버튼을 누르세요", icon = LineIcons.Lock)
                         }
                     }
                 }
@@ -942,7 +952,7 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(36.dp),
                     ) {
                         RoundButton("⟲${prefs.skipSeconds}", 52) { seekBy(-skipMs) }
-                        RoundButton(if (playing) "❚❚" else "▶", 72) { togglePlay() }
+                        RoundButton("", 72, icon = if (playing) LineIcons.Pause else LineIcons.Play) { togglePlay() }
                         RoundButton("${prefs.skipSeconds}⟳", 52) { seekBy(skipMs) }
                     }
                 }
@@ -1200,19 +1210,23 @@ private fun trackName(name: String?, kind: String): String = when {
 }
 
 @Composable
-private fun TopChip(label: String, onClick: () -> Unit) {
-    Text(
-        label,
-        color = Color.White,
-        fontSize = 13.sp,
-        maxLines = 1,
-        modifier = Modifier
-            .padding(horizontal = 3.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0x44FFFFFF))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 7.dp),
-    )
+private fun TopChip(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit) {
+    val mod = Modifier
+        .padding(horizontal = 3.dp)
+        .clip(RoundedCornerShape(8.dp))
+        .background(Color(0x44FFFFFF))
+        .clickable(onClick = onClick)
+    if (icon != null) {
+        Box(mod.padding(horizontal = 8.dp, vertical = 5.dp)) { LineIcon(icon, size = 20.dp, tint = Color.White) }
+    } else {
+        Text(
+            label,
+            color = Color.White,
+            fontSize = 13.sp,
+            maxLines = 1,
+            modifier = mod.padding(horizontal = 10.dp, vertical = 7.dp),
+        )
+    }
 }
 
 @Composable
@@ -1270,7 +1284,7 @@ private fun SmallButton(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun RoundButton(label: String, sizeDp: Int, onClick: () -> Unit) {
+private fun RoundButton(label: String, sizeDp: Int, icon: androidx.compose.ui.graphics.vector.ImageVector? = null, onClick: () -> Unit) {
     Box(
         Modifier
             .size(sizeDp.dp)
@@ -1279,7 +1293,8 @@ private fun RoundButton(label: String, sizeDp: Int, onClick: () -> Unit) {
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = Color.White, fontSize = if (sizeDp >= 64) 26.sp else 15.sp, fontWeight = FontWeight.Bold)
+        if (icon != null) LineIcon(icon, size = (sizeDp * 0.45f).dp, tint = Color.White)
+        else Text(label, color = Color.White, fontSize = if (sizeDp >= 64) 26.sp else 15.sp, fontWeight = FontWeight.Bold)
     }
 }
 

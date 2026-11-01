@@ -388,7 +388,7 @@ fun SettingsScreen(
                 )
                 SettingSwitch(
                     title = "화면 잠금 버튼 사용",
-                    subtitle = "켜면 재생 화면 위쪽에 🔒 버튼이 생겨요. 누르면 화면 터치가 잠겨요",
+                    subtitle = "켜면 재생 화면 위쪽에 잠금 버튼이 생겨요. 누르면 화면 터치가 잠겨요",
                     checked = lockButton,
                     onChange = onLockButtonChange,
                 )

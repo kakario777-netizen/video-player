@@ -106,7 +106,7 @@ fun AiSubtitleSettings() {
 
         if (!WhisperNative.available || !LlamaNative.available) {
             Text(
-                "⚠️ 이 기기에서 AI 엔진을 불러오지 못했어요",
+                "이 기기에서 AI 엔진을 불러오지 못했어요",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
@@ -146,7 +146,7 @@ fun AiSubtitleSettings() {
                         if (models.isReady(AiModel.WHISPER_SMALL))
                             "큰 모델은 폰에서 재생 속도를 못 따라가요. 보면서는 small, 미리 만들기는 위에서 고른 모델을 써요"
                         else
-                            "⚠️ small 모델을 받아야 켜져요 — 큰 모델만으로는 재생 중 자막이 많이 늦어요",
+                            "small 모델을 받아야 켜져요 — 큰 모델만으로는 재생 중 자막이 많이 늦어요",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (models.isReady(AiModel.WHISPER_SMALL)) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                     )
@@ -310,8 +310,8 @@ fun AiSubtitleSettings() {
                     Text(
                         when {
                             !AiLibs.hasI8mm -> "이 폰은 지원하지 않아요 — 기본 엔진으로 동작해요"
-                            fastCpu && AiLibs.fastLoaded -> "✓ 이 폰은 지원해요 — 자동으로 켜져서 고성능 엔진으로 동작 중"
-                            fastCpu -> "✓ 이 폰은 지원해요 — 자동으로 켜짐 (앱을 다시 켜면 고성능 엔진 적용)"
+                            fastCpu && AiLibs.fastLoaded -> "이 폰은 지원해요 — 자동으로 켜져서 고성능 엔진으로 동작 중"
+                            fastCpu -> "이 폰은 지원해요 — 자동으로 켜짐 (앱을 다시 켜면 고성능 엔진 적용)"
                             else -> "꺼짐 — 앱을 다시 켜면 기본 엔진으로 동작해요"
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -497,7 +497,11 @@ private fun ModelRow(
             Spacer(Modifier.width(8.dp))
             when (state) {
                 ModelState.Ready -> Column(horizontalAlignment = Alignment.End) {
-                    Text("✓ 받음", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    LineIcon(LineIcons.Check, size = 16.dp)
+                    Spacer(Modifier.width(4.dp))
+                    Text("받음", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                }
                     TextButton(onClick = onDelete) { Text("지우기", style = MaterialTheme.typography.labelMedium) }
                 }
                 is ModelState.Downloading -> OutlinedButton(onClick = onCancel) { Text("취소") }

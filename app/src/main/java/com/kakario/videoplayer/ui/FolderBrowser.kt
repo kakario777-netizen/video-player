@@ -406,7 +406,7 @@ fun FolderBrowser(
                     if (target.isVideo) {
                         InfoLine("용량", formatBytes(target.size))
                         InfoLine("형식", target.extension.uppercase())
-                        InfoLine("위치", if (origin.server != null) "🗄️ ${origin.server.name}" else "📱 내 폰")
+                        InfoLine("위치", if (origin.server != null) "FTP · ${origin.server.name}" else "내 폰")
                         val watched = remember(target, playback.version) { playback.get(playback.keyFor(origin, target)) }
                         val dur = remember(target) { thumbs?.let { t -> t.duration(t.key(origin, target)) } ?: 0L }
                         if (dur > 0) InfoLine("재생 시간", formatTime(dur))
@@ -416,12 +416,12 @@ fun FolderBrowser(
                         Spacer(Modifier.height(8.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
                         Spacer(Modifier.height(4.dp))
-                        MenuItem("☑️  여러 개 선택") {
+                        MenuItem("여러 개 선택", icon = LineIcons.Select) {
                             menuFor = null
                             selecting = true
                             selected = setOf(target.path)
                         }
-                        MenuItem("💬  AI 자막 미리 만들기") {
+                        MenuItem("AI 자막 미리 만들기", icon = LineIcons.Subtitle) {
                             menuFor = null
                             if (!AiBatch.ready(context)) {
                                 toast("설정 > 자막에서 AI 음성인식 모델을 먼저 받아 주세요")
@@ -432,34 +432,34 @@ fun FolderBrowser(
                         }
                         val aiKey = remember(target) { playback.keyFor(origin, target) }
                         val hasAi = remember(target) { com.kakario.videoplayer.ai.AiSubtitleSession.hasCache(context, aiKey) }
-                        MenuItem("🧹  AI 자막 초기화 (만들던 것 지우고 처음부터)", enabled = hasAi) {
+                        MenuItem("AI 자막 초기화 (만들던 것 지우고 처음부터)", icon = LineIcons.Eraser, enabled = hasAi) {
                             menuFor = null
                             com.kakario.videoplayer.ai.AiSubtitleSession.clearOne(context, aiKey)
                             toast("만들던 AI 자막을 지웠어요 — 다음에 볼 때 처음부터 다시 만들어요")
                         }
-                        MenuItem("🖼️  썸네일 다시 만들기") {
+                        MenuItem("썸네일 다시 만들기", icon = LineIcons.Image) {
                             menuFor = null
                             thumbs?.invalidate(origin, target)
                             scope.launch { thumbs?.load(origin, target, force = true) }
                             toast("썸네일을 다시 만들어요")
                         }
-                        MenuItem("⏮️  시청 기록 지우기 (처음부터 보기)", enabled = watched.started) {
+                        MenuItem("시청 기록 지우기 (처음부터 보기)", icon = LineIcons.History, enabled = watched.started) {
                             menuFor = null
                             playback.clear(playback.keyFor(origin, target))
                             toast("시청 기록을 지웠어요")
                         }
-                        MenuItem("🗑️  파일 삭제", color = MaterialTheme.colorScheme.error) {
+                        MenuItem("파일 삭제", icon = LineIcons.Trash, color = MaterialTheme.colorScheme.error) {
                             menuFor = null
                             deleteTarget = target
                             deleteStep = 1
                         }
                     } else {
-                        MenuItem("☑️  여러 개 선택") {
+                        MenuItem("여러 개 선택", icon = LineIcons.Select) {
                             menuFor = null
                             selecting = true
                             selected = setOf(target.path)
                         }
-                        MenuItem("💬  이 폴더 영상 AI 자막 모두 만들기") {
+                        MenuItem("이 폴더 영상 AI 자막 모두 만들기", icon = LineIcons.Subtitle) {
                             menuFor = null
                             if (!AiBatch.ready(context)) {
                                 toast("설정 > 자막에서 AI 음성인식 모델을 먼저 받아 주세요")
@@ -468,7 +468,7 @@ fun FolderBrowser(
                                 toast("'${target.name}' AI 자막 만들기를 대기줄에 넣었어요 (한국 영상·자막 있는 것 제외)")
                             }
                         }
-                        MenuItem("🔄  이 폴더 썸네일 모두 다시 만들기") {
+                        MenuItem("이 폴더 썸네일 모두 다시 만들기", icon = LineIcons.Refresh) {
                             menuFor = null
                             val loader: suspend () -> List<FileEntry> = { currentLoad(target.path) }
                             rebuildAsk = RebuildAsk(
@@ -479,7 +479,7 @@ fun FolderBrowser(
                                 fromSelection = false,
                             )
                         }
-                        MenuItem("🖼️  이 폴더 썸네일 모두 만들기 (없는 것만)") {
+                        MenuItem("이 폴더 썸네일 모두 만들기 (없는 것만)", icon = LineIcons.Image) {
                             menuFor = null
                             scope.launch {
                                 val list = try {
@@ -499,7 +499,7 @@ fun FolderBrowser(
                             }
                         }
                         val fav = isFavorite(target.path)
-                        MenuItem(if (fav) "☆  즐겨찾기에서 빼기" else "★  즐겨찾기에 추가") {
+                        MenuItem(if (fav) "즐겨찾기에서 빼기" else "즐겨찾기에 추가", icon = if (fav) LineIcons.Star else LineIcons.StarFilled) {
                             menuFor = null
                             toggle(target.path)
                         }
@@ -645,20 +645,28 @@ fun formatBytes(bytes: Long): String = when {
 @Composable
 private fun MenuItem(
     text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     enabled: Boolean = true,
     color: Color = MaterialTheme.colorScheme.onSurface,
     onClick: () -> Unit,
 ) {
-    Text(
-        text,
-        color = if (enabled) color else color.copy(alpha = 0.35f),
-        style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier
+    val alpha = if (enabled) 1f else 0.35f
+    Row(
+        Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 14.dp),
-    )
+            .padding(horizontal = 8.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) {
+            // 선 아이콘 (삭제처럼 빨간 글씨 메뉴는 아이콘도 같은 색)
+            val tint = if (color == MaterialTheme.colorScheme.onSurface) LineBlue else color
+            LineIcon(icon, size = 22.dp, tint = tint.copy(alpha = alpha))
+            Spacer(Modifier.width(14.dp))
+        }
+        Text(text, color = color.copy(alpha = alpha), style = MaterialTheme.typography.bodyLarge)
+    }
 }
 
 /**
@@ -731,7 +739,7 @@ private fun VideoTile(
                         .border(2.dp, Color.White, CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (selection) Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    if (selection) LineIcon(LineIcons.Check, size = 16.dp, tint = Color.White)
                 }
                 WatchBar(origin, entry, Modifier.align(Alignment.BottomCenter))
             }
@@ -767,7 +775,7 @@ private fun WatchBar(origin: MediaOrigin, entry: FileEntry, modifier: Modifier) 
     Box(modifier.fillMaxWidth()) {
         if (p.finished) {
             Text(
-                "✓ 다 봄",
+                "다 봄",
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier
@@ -887,7 +895,7 @@ fun ErrorView(message: String, onRetry: () -> Unit, modifier: Modifier = Modifie
         modifier.padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("⚠️", style = MaterialTheme.typography.displaySmall)
+        LineIcon(LineIcons.Warning, size = 44.dp, tint = MaterialTheme.colorScheme.error)
         Spacer(Modifier.height(12.dp))
         Text(message, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onBackground)
         Spacer(Modifier.height(16.dp))
