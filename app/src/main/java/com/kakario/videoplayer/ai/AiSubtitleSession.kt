@@ -639,6 +639,19 @@ class AiSubtitleSession(
         fun sha1(s: String): String =
             MessageDigest.getInstance("SHA-1").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
+        /** 이 영상의 만들던 AI 자막(진행 기록·한국어 판정) 이 있는지. */
+        fun hasCache(context: Context, key: String): Boolean {
+            val dir = File(context.filesDir, "aisubs")
+            return File(dir, sha1(key) + ".json").exists() || File(dir, sha1(key) + ".ko").exists()
+        }
+
+        /** 이 영상의 만들던 AI 자막 지우기 → 다음에 처음부터 다시 만든다. */
+        fun clearOne(context: Context, key: String) {
+            val dir = File(context.filesDir, "aisubs")
+            File(dir, sha1(key) + ".json").delete()
+            File(dir, sha1(key) + ".ko").delete()
+        }
+
         /** 저장해둔 AI 자막 모두 지우기 (설정). */
         fun clearAll(context: Context) {
             File(context.filesDir, "aisubs").listFiles()?.forEach { it.delete() }

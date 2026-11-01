@@ -430,6 +430,13 @@ fun FolderBrowser(
                                 toast("AI 자막 만들기를 대기줄에 넣었어요 — 위쪽과 알림창에 진행 표시")
                             }
                         }
+                        val aiKey = remember(target) { playback.keyFor(origin, target) }
+                        val hasAi = remember(target) { com.kakario.videoplayer.ai.AiSubtitleSession.hasCache(context, aiKey) }
+                        MenuItem("🧹  AI 자막 초기화 (만들던 것 지우고 처음부터)", enabled = hasAi) {
+                            menuFor = null
+                            com.kakario.videoplayer.ai.AiSubtitleSession.clearOne(context, aiKey)
+                            toast("만들던 AI 자막을 지웠어요 — 다음에 볼 때 처음부터 다시 만들어요")
+                        }
                         MenuItem("🖼️  썸네일 다시 만들기") {
                             menuFor = null
                             thumbs?.invalidate(origin, target)
