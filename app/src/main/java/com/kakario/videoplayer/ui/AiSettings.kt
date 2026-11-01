@@ -290,6 +290,70 @@ fun AiSubtitleSettings() {
                 }
             }
 
+            // 음성 인식 속도 측정: 영상 없이 30초 분량을 스레드 수를 바꿔 가며 분석 → 폰 계산 속도 확인용
+            var benchRunning by remember { mutableStateOf(false) }
+            var benchResult by remember { mutableStateOf<String?>(null) }
+            val benchModel = listOf(AiModel.WHISPER_SMALL, AiModel.WHISPER_TURBO, AiModel.WHISPER_LARGE).firstOrNull { models.isReady(it) }
+            if (benchModel != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(
+                        enabled = !benchRunning,
+                        onClick = {
+                            benchRunning = true
+                            benchResult = "측정 준비 중… (영상은 끄고 기다려 주세요)"
+                            Thread({
+                                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
+                                val sb = StringBuilder()
+                                try {
+                                    val cores = (0 until Runtime.getRuntime().availableProcessors()).map { i ->
+                                        runCatching {
+                                            java.io.File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq").readText().trim().toLong() / 1000
+                                        }.getOrDefault(0L)
+                                    }
+                                    sb.append("모델 ${benchModel.name.lowercase().removePrefix("whisper_")} · 빠른 코어 ${AiLibs.bigCores}개 · 엔진 ${if (AiLibs.fastLoaded) "고성능" else "기본"}\n")
+                                    sb.append("코어 최고 속도(MHz): ${cores.joinToString(" ")}\n")
+                                    val h = WhisperNative.init(models.file(benchModel).path)
+                                    if (h == 0L) {
+                                        sb.append("음성 인식 모델을 열지 못했어요")
+                                    } else {
+                                        // 아주 작은 잡음 30초 (말소리 없음 → 분석 시간만 거의 그대로 잼)
+                                        val rnd = java.util.Random(1)
+                                        val pcm = FloatArray(16_000 * 30) { (rnd.nextFloat() - 0.5f) * 0.01f }
+                                        val counts = listOf(2, 3, 4, AiLibs.bigCores, Runtime.getRuntime().availableProcessors()).distinct().sorted()
+                                        for (t in counts) {
+                                            benchResult = sb.toString() + "스레드 ${t}개 측정 중…"
+                                            val t0 = System.currentTimeMillis()
+                                            val raw = WhisperNative.transcribe(h, pcm, "en", t, false, true)
+                                            val total = System.currentTimeMillis() - t0
+                                            val head = raw?.let { String(it, Charsets.UTF_8).substringBefore('\n').split('\t') }
+                                            val enc = head?.getOrNull(1)?.toLongOrNull()
+                                            sb.append("스레드 ${t}개: 분석 ${enc?.let { "%.1f초".format(it / 1000.0) } ?: "?"} · 전체 ${"%.1f초".format(total / 1000.0)}\n")
+                                        }
+                                        WhisperNative.free(h)
+                                        sb.append("(정상이라면 small 기준 분석이 몇 초 이내)")
+                                    }
+                                } catch (e: Throwable) {
+                                    sb.append("오류: ${e.message ?: e.javaClass.simpleName}")
+                                }
+                                benchResult = sb.toString().trim()
+                                benchRunning = false
+                            }, "ai-bench").start()
+                        },
+                    ) { Text(if (benchRunning) "측정 중…" else "음성 인식 속도 측정") }
+                }
+                benchResult?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                    )
+                }
+            }
+
             SubHeader("③ 폰 성능 기능 더 쓰기")
             Row(
                 Modifier
