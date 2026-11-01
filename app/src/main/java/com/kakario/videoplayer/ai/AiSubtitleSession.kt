@@ -289,7 +289,14 @@ class AiSubtitleSession(
     private val done: MutableSet<Int> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var durationMs = 0L
     private var job: Job? = null
-    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "ai-subtitles").apply { priority = Thread.NORM_PRIORITY - 1 } }
+    // 주의: 우선순위를 낮추면 안드로이드가 이 스레드(와 계산용으로 따라 만들어지는 스레드들)를
+    // '백그라운드'로 보고 느린 절전 코어에만 올려서 계산이 10배쯤 느려진다 → 보통 우선순위로.
+    private val worker = Executors.newSingleThreadExecutor { r ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
+            r.run()
+        }, "ai-subtitles")
+    }
     private val dispatcher = worker.asCoroutineDispatcher()
     @Volatile private var whisperHandle = 0L
     @Volatile private var llmHandle = 0L

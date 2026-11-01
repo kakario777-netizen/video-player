@@ -110,10 +110,11 @@ object LlmHolder {
         attach(context)
         if (handle != 0L || warmingSince != 0L || !LlamaNative.available) return
         if (freeMemory(context) < PREWARM_FREE_BYTES) return
-        Thread({ runCatching { use(modelPath) { } } }, "llm-prewarm").apply {
-            priority = Thread.MIN_PRIORITY
-            start()
-        }
+        // 우선순위를 낮추면 느린 절전 코어로만 밀려나 예열이 몇 배 느려진다 → 보통 우선순위
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
+            runCatching { use(modelPath) { } }
+        }, "llm-prewarm").start()
     }
 
     /** 진행 중인 번역 중단 (재생 화면 닫을 때). */
