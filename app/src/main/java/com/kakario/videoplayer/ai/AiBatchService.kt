@@ -104,7 +104,7 @@ class AiBatchService : Service() {
             .setContentTitle(title)
             .apply {
                 if (text != null) {
-                    setContentText(text.replace('\n', ' · '))
+                    setContentText(text.replace("\n", " · "))
                     setStyle(Notification.BigTextStyle().bigText(text))
                 }
             }
