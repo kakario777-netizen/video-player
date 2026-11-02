@@ -76,6 +76,7 @@ class AiBatchService : Service() {
                         val title = if (st.paused) "AI 자막 잠시 멈춤 (영상 보는 중)" else "AI 자막 만드는 중 ${st.percent}%"
                         val text = buildString {
                             append(st.current)
+                            if (st.detail.isNotEmpty() && !st.paused) append("\n").append(st.detail)
                             if (st.waiting > 0) append(" · 대기 ${st.waiting}")
                             if (st.doneCount > 0) append(" · 완료 ${st.doneCount}")
                             if (st.skipCount > 0) append(" · 건너뜀 ${st.skipCount}")
@@ -101,7 +102,12 @@ class AiBatchService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_ai)
             .setContentTitle(title)
-            .apply { if (text != null) setContentText(text) }
+            .apply {
+                if (text != null) {
+                    setContentText(text.replace('\n', ' · '))
+                    setStyle(Notification.BigTextStyle().bigText(text))
+                }
+            }
             .setProgress(100, percent, percent <= 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

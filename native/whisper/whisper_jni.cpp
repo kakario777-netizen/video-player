@@ -94,6 +94,12 @@ Java_com_kakario_videoplayer_ai_WhisperNative_transcribe(
     p.suppress_blank = true;
     p.suppress_nst = true;   // [음악] 같은 비음성 표시 줄이기
     if (beam) p.beam_search.beam_size = 5;
+    if (!live) {
+        // 미리 만들기(꼼꼼): 애매하면 다시 풀어보되 횟수를 줄이고(0 → 0.4 → 0.8, 3번까지),
+        // 같은 말 반복에 빠져도 한 줄이 끝없이 길어지지 않게 → 한 구간이 수 분~수십 분 걸리는 일 방지
+        p.temperature_inc = 0.4f;
+        p.max_tokens = 96;
+    }
     if (live) {
         // 보면서 만들 때: 결과가 애매해도 다시 여러 번 풀어보지 않고(온도 올려 재시도 끔),
         // 같은 말 반복에 빠져도 한 줄이 너무 길어지지 않게 끊는다 → 한 구간이 수십 초~수 분 걸리는 일 방지

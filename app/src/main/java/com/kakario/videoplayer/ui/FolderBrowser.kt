@@ -241,6 +241,7 @@ fun FolderBrowser(
                         buildString {
                             append(if (aiJob.paused) "AI 자막 잠시 멈춤 · " else "AI 자막 ${aiJob.percent}% · ")
                             append(aiJob.current)
+                            if (aiJob.detail.isNotEmpty() && !aiJob.paused) append(" · ").append(aiJob.detail)
                             if (aiJob.waiting > 0) append(" · 대기 ${aiJob.waiting}")
                             if (aiJob.doneCount > 0) append(" · 완료 ${aiJob.doneCount}")
                             if (aiJob.skipCount > 0) append(" · 건너뜀 ${aiJob.skipCount}")

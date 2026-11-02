@@ -68,6 +68,19 @@ class AiSubtitleSession(
     @Volatile private var bestWhisperHandle = 0L
     @Volatile private var perfectExported = false
 
+    /**
+     * 미리 만들기 알림·목록에 보여줄 지금 하는 일.
+     * 예) "1:30 구간 · 음성 인식 중 2분 10초째", "영상 여는 중 12초째"
+     */
+    fun batchDetail(now: Long): String {
+        val st = stage ?: return status ?: "준비 중"
+        val el = ((now - stageSince) / 1000).coerceAtLeast(0)
+        val t = if (el >= 60) "${el / 60}분 ${el % 60}초째" else "${el}초째"
+        val ws = workStartMs
+        val where = if (ws >= 0) "${mmss(ws)} 구간 · " else ""
+        return "$where$st $t"
+    }
+
     /** 처음 번역 자막이 생긴 시각 (잠깐 '실시간 번역을 시작합니다' 안내용). */
     @Volatile private var firstTranslatedAt = 0L
 

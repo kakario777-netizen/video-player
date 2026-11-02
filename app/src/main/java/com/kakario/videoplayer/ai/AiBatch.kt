@@ -36,6 +36,8 @@ data class AiBatchStatus(
     val doneCount: Int,
     val skipCount: Int,
     val paused: Boolean,
+    /** 지금 하는 일 (예: "1:30 구간 · 음성 인식 중 2분 10초째"). */
+    val detail: String = "",
 )
 
 /**
@@ -224,7 +226,7 @@ object AiBatch {
                         while (isActive && !stopping && gen == generation) {
                             _status.value = AiBatchStatus(
                                 entry.name, (s.progress * 100).toInt(), waiting() + extraWaiting,
-                                doneCount, skipCount, paused.value,
+                                doneCount, skipCount, paused.value, s.batchDetail(System.currentTimeMillis()),
                             )
                             if (paused.value) {
                                 s.stop()
