@@ -38,6 +38,8 @@ data class AiBatchStatus(
     val paused: Boolean,
     /** 지금 하는 일 (예: "1:30 구간 · 음성 인식 중 2분 10초째"). */
     val detail: String = "",
+    /** 펼쳐 보기용: 끝난 것·지금·기다리는 것 목록. */
+    val items: List<com.kakario.videoplayer.thumb.JobItem> = emptyList(),
 )
 
 /**
@@ -68,6 +70,35 @@ object AiBatch {
     /** 중지 누를 때마다 바뀜 — 예전 작업이 뒤늦게 상태를 다시 띄우지 못하게. */
     @Volatile private var generation = 0
     @Volatile private var stopping = false
+
+    /** 이번에 끝냈거나 건너뛴 영상 (최근 30개, 펼쳐 보기용). */
+    private val history = ArrayDeque<com.kakario.videoplayer.thumb.JobItem>()
+    /** 지금 폴더 안에서 다음 차례인 영상 이름들. */
+    @Volatile private var folderRest: List<String> = emptyList()
+
+    private fun record(name: String, state: Int, note: String) {
+        synchronized(history) {
+            history.addLast(com.kakario.videoplayer.thumb.JobItem(name, state, note))
+            while (history.size > 30) history.removeFirst()
+        }
+    }
+
+    /** 펼쳐 보기 목록: 끝난 것 → 지금 → 폴더 남은 것 → 대기줄. */
+    private fun itemsNow(current: String?, detail: String): List<com.kakario.videoplayer.thumb.JobItem> {
+        val out = ArrayList<com.kakario.videoplayer.thumb.JobItem>()
+        synchronized(history) { out.addAll(history) }
+        if (!current.isNullOrEmpty()) out += com.kakario.videoplayer.thumb.JobItem(current, 1, detail)
+        folderRest.forEach { out += com.kakario.videoplayer.thumb.JobItem(it, 0) }
+        synchronized(queue) {
+            queue.forEach { t ->
+                out += when (t) {
+                    is Task.One -> com.kakario.videoplayer.thumb.JobItem(t.entry.name, 0)
+                    is Task.Folder -> com.kakario.videoplayer.thumb.JobItem("${t.name} (폴더)", 0)
+                }
+            }
+        }
+        return out
+    }
 
     private var doneCount = 0
     private var skipCount = 0
@@ -101,6 +132,7 @@ object AiBatch {
         if (worker?.isActive != true) {
             doneCount = 0
             skipCount = 0
+            synchronized(history) { history.clear() }
             worker = scope.launch { run(app) }
         } else {
             publish()
@@ -112,7 +144,8 @@ object AiBatch {
 
     private fun publish(current: String? = _status.value?.current, percent: Int = _status.value?.percent ?: 0) {
         if (stopping) return
-        _status.value = AiBatchStatus(current ?: "", percent, waiting(), doneCount, skipCount, paused.value)
+        _status.value = AiBatchStatus(current ?: "", percent, waiting(), doneCount, skipCount, paused.value,
+            items = itemsNow(current, ""))
     }
 
     private suspend fun run(app: Context) {
@@ -148,9 +181,11 @@ object AiBatch {
             // 폴더 안 영상들을 대기줄 맨 앞에 차례로 (같은 연결 재사용을 위해 여기서 바로 처리)
             videos.forEachIndexed { i, v ->
                 if (stopping) return
+                folderRest = videos.drop(i + 1).map { it.name }
                 processVideo(app, task.origin, v, folder = list, browser = browser, extraWaiting = videos.size - i - 1)
             }
         } finally {
+            folderRest = emptyList()
             browser?.close()
         }
     }
@@ -176,6 +211,7 @@ object AiBatch {
                 emptyList()
             }
             if (shouldSkip(app, origin, entry, listing)) {
+                record(entry.name, 3, "건너뜀 (자막 있음·한국어·이미 완성)")
                 skipCount++
                 publish()
                 return
@@ -227,6 +263,7 @@ object AiBatch {
                             _status.value = AiBatchStatus(
                                 entry.name, (s.progress * 100).toInt(), waiting() + extraWaiting,
                                 doneCount, skipCount, paused.value, s.batchDetail(System.currentTimeMillis()),
+                                items = itemsNow(entry.name, s.batchDetail(System.currentTimeMillis())),
                             )
                             if (paused.value) {
                                 s.stop()
@@ -245,10 +282,12 @@ object AiBatch {
                     if (stopping) return
                     when {
                         s.completed -> {
+                            record(entry.name, 2, "완료")
                             doneCount++
                             break
                         }
                         s.korean -> {
+                            record(entry.name, 3, "한국어 영상")
                             skipCount++
                             break
                         }
@@ -259,6 +298,7 @@ object AiBatch {
                         }
                         else -> {
                             // 실패 (형식·연결 문제) → 건너뜀
+                            record(entry.name, 3, s.failed ?: "실패")
                             skipCount++
                             break
                         }

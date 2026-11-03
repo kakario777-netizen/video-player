@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 화면이 꺼져도 썸네일·AI 자막 만들기를 계속 (배터리 최적화 제외 요청, 와이파이 깨워 두기) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- 내 폰 탭: 안드로이드 10 이하 -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"

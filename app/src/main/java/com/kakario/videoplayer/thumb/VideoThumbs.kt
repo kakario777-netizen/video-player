@@ -38,7 +38,19 @@ import java.util.concurrent.ConcurrentHashMap
 val LocalVideoThumbs = staticCompositionLocalOf<VideoThumbs?> { null }
 
 /** 폴더 전체 썸네일 만들기 진행 상황 (null이면 쉬는 중). */
-data class ThumbJobStatus(val folder: String, val done: Int, val total: Int, val waiting: Int = 0)
+data class ThumbJobStatus(
+    val folder: String,
+    val done: Int,
+    val total: Int,
+    val waiting: Int = 0,
+    /** 펼쳐 보기용: 이번 작업 영상들 (이름, 상태). */
+    val items: List<JobItem> = emptyList(),
+    /** 다음 차례로 기다리는 작업(폴더) 이름들. */
+    val queued: List<String> = emptyList(),
+)
+
+/** 진행 목록 한 줄. state: 0 기다림, 1 하는 중, 2 완료, 3 실패/건너뜀. */
+data class JobItem(val name: String, val state: Int, val note: String = "")
 
 /**
  * 영상 썸네일(기본 30초 지점 장면)을 만들고 기억해두는 곳.
@@ -174,6 +186,8 @@ class VideoThumbs private constructor(context: Context) {
 
     private fun enqueue(tasks: List<Task>) {
         synchronized(queue) { queue.addAll(tasks) }
+        // 화면이 꺼져도 계속 만들도록 백그라운드 작업 알림 서비스
+        if (tasks.isNotEmpty()) com.kakario.videoplayer.ai.AiBatchService.start(appContext)
         if (folderJob?.isActive == true) return
         folderJob = scope.launch {
             try {
@@ -189,13 +203,26 @@ class VideoThumbs private constructor(context: Context) {
                         emptyList()
                     }
                     val todo = if (task.force) videos else videos.filter { !fileFor(key(task.origin, it)).exists() }
+                    val states = IntArray(todo.size)
+                    val queuedNames = { synchronized(queue) { queue.map { it.name } } }
+                    fun publish(i: Int) {
+                        _job.value = ThumbJobStatus(
+                            task.name, i, todo.size, waiting(),
+                            items = todo.mapIndexed { j, v -> JobItem(v.name, states[j]) },
+                            queued = queuedNames(),
+                        )
+                    }
                     todo.forEachIndexed { i, v ->
                         if (!isActive) return@launch
-                        _job.value = ThumbJobStatus(task.name, i, todo.size, waiting())
+                        states[i] = 1
+                        publish(i)
                         if (task.force) invalidate(task.origin, v)
                         val key = key(task.origin, v)
                         if (memory.get(key) == null && !fileFor(key).exists()) {
-                            runCatching { generateLocked(task.origin, v, key) }
+                            val bmp = runCatching { generateLocked(task.origin, v, key) }.getOrNull()
+                            states[i] = if (bmp != null) 2 else 3
+                        } else {
+                            states[i] = 2
                         }
                     }
                 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -203,57 +204,32 @@ fun FolderBrowser(
             )
           }
 
+            // 썸네일·AI 자막 만들기 진행 줄 — 누르면 아래로 펼쳐져서 영상별로 자세히 보여준다
             val job = thumbs?.job?.collectAsState()?.value
             if (job != null) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(start = 16.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "'${job.folder}' 썸네일 만드는 중 ${job.done}/${job.total}" +
-                            if (job.waiting > 0) " · 대기 ${job.waiting}" else "",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = { thumbs?.stopFolder() }) { Text("중지") }
-                }
+                JobPanel(
+                    title = "'${job.folder}' 썸네일 만드는 중 ${job.done}/${job.total}" +
+                        if (job.waiting > 0) " · 대기 ${job.waiting}" else "",
+                    items = job.items,
+                    footer = job.queued.map { "$it (대기)" },
+                    onStop = { thumbs?.stopFolder() },
+                )
             }
             val aiJob = AiBatch.status.collectAsState().value
             if (aiJob != null) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                        .padding(start = 16.dp, end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        buildString {
-                            append(if (aiJob.paused) "AI 자막 잠시 멈춤 · " else "AI 자막 ${aiJob.percent}% · ")
-                            append(aiJob.current)
-                            if (aiJob.detail.isNotEmpty() && !aiJob.paused) append(" · ").append(aiJob.detail)
-                            if (aiJob.waiting > 0) append(" · 대기 ${aiJob.waiting}")
-                            if (aiJob.doneCount > 0) append(" · 완료 ${aiJob.doneCount}")
-                            if (aiJob.skipCount > 0) append(" · 건너뜀 ${aiJob.skipCount}")
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = { AiBatch.stopAll() }) { Text("중지") }
-                }
+                JobPanel(
+                    title = buildString {
+                        append(if (aiJob.paused) "AI 자막 잠시 멈춤 · " else "AI 자막 ${aiJob.percent}% · ")
+                        append(aiJob.current)
+                        if (aiJob.detail.isNotEmpty() && !aiJob.paused) append(" · ").append(aiJob.detail)
+                        if (aiJob.waiting > 0) append(" · 대기 ${aiJob.waiting}")
+                        if (aiJob.doneCount > 0) append(" · 완료 ${aiJob.doneCount}")
+                        if (aiJob.skipCount > 0) append(" · 건너뜀 ${aiJob.skipCount}")
+                    },
+                    items = aiJob.items,
+                    footer = emptyList(),
+                    onStop = { AiBatch.stopAll() },
+                )
             }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -625,6 +601,104 @@ fun FolderBrowser(
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("취소") } },
         )
+    }
+}
+
+/**
+ * 진행 줄 (썸네일·AI 자막 만들기). 누르면 아래로 펼쳐져서 영상마다 상태를 보여준다.
+ * 상태 표시: 완료 = 체크, 하는 중 = 돌아가는 원, 기다림 = 흐린 점, 실패·건너뜀 = 경고
+ */
+@Composable
+private fun JobPanel(
+    title: String,
+    items: List<com.kakario.videoplayer.thumb.JobItem>,
+    footer: List<String>,
+    onStop: () -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { open = !open }
+                .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                if (open) "접기" else "자세히",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            TextButton(onClick = onStop) { Text("중지") }
+        }
+        androidx.compose.animation.AnimatedVisibility(visible = open) {
+            val all = items.map { it } + footer.map { com.kakario.videoplayer.thumb.JobItem(it, 0) }
+            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+            // 지금 하는 항목이 보이도록 스크롤
+            val activeIndex = all.indexOfFirst { it.state == 1 }
+            LaunchedEffect(open, activeIndex) {
+                if (open && activeIndex >= 0) listState.animateScrollToItem((activeIndex - 2).coerceAtLeast(0))
+            }
+            androidx.compose.foundation.lazy.LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 280.dp)
+                    .padding(bottom = 6.dp),
+            ) {
+                items(all.size) { i ->
+                    val row = all[i]
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                            when (row.state) {
+                                1 -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                                2 -> LineIcon(LineIcons.Check, size = 16.dp)
+                                3 -> LineIcon(LineIcons.Warning, size = 15.dp, tint = MaterialTheme.colorScheme.error)
+                                else -> Box(
+                                    Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                row.name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (row.state == 0) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (row.note.isNotEmpty()) {
+                                Text(
+                                    row.note,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -29,6 +29,7 @@ class AiBatchService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var watch: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -36,18 +37,19 @@ class AiBatchService : Service() {
         super.onCreate()
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "AI 자막 미리 만들기", NotificationManager.IMPORTANCE_LOW)
-                .apply { description = "AI 자막을 만드는 진행 상황" }
+            NotificationChannel(CHANNEL, "썸네일·AI 자막 만들기", NotificationManager.IMPORTANCE_LOW)
+                .apply { description = "화면이 꺼져도 계속 만드는 작업의 진행 상황" }
         )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             AiBatch.stopAll()
+            com.kakario.videoplayer.thumb.VideoThumbs.get(applicationContext).stopFolder()
             stopSelf()
             return START_NOT_STICKY
         }
-        val first = build("AI 자막 준비 중…", null, 0)
+        val first = build("작업 준비 중…", null, 0)
         try {
             if (Build.VERSION.SDK_INT >= 35) {
                 startForeground(ID, first, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING)
@@ -66,25 +68,50 @@ class AiBatchService : Service() {
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "videoplayer:ai-subtitles")
                 .apply { setReferenceCounted(false); acquire(6 * 60 * 60 * 1000L) }
         }
-        if (watch == null) {
-            watch = scope.launch {
-                AiBatch.status.collectLatest { st ->
-                    if (st == null) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    } else {
-                        val title = if (st.paused) "AI 자막 잠시 멈춤 (영상 보는 중)" else "AI 자막 만드는 중 ${st.percent}%"
-                        val text = buildString {
-                            append(st.current)
-                            if (st.detail.isNotEmpty() && !st.paused) append("\n").append(st.detail)
-                            if (st.waiting > 0) append(" · 대기 ${st.waiting}")
-                            if (st.doneCount > 0) append(" · 완료 ${st.doneCount}")
-                            if (st.skipCount > 0) append(" · 건너뜀 ${st.skipCount}")
-                        }
-                        getSystemService(NotificationManager::class.java)
-                            .notify(ID, build(title, text, st.percent))
-                    }
+        if (wifiLock == null) {
+            // 화면이 꺼져도 와이파이가 잠들지 않게 (FTP에서 계속 받아야 함)
+            runCatching {
+                val wm = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+                @Suppress("DEPRECATION")
+                val mode = if (Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                else android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                wifiLock = wm.createWifiLock(mode, "videoplayer:background-work").apply {
+                    setReferenceCounted(false)
+                    acquire()
                 }
+            }
+        }
+        if (watch == null) {
+            val thumbs = com.kakario.videoplayer.thumb.VideoThumbs.get(applicationContext)
+            watch = scope.launch {
+                // AI 자막 미리 만들기 + 썸네일 만들기 둘 다 보고, 둘 다 끝나면 알림을 내린다
+                kotlinx.coroutines.flow.combine(AiBatch.status, thumbs.job) { ai, th -> ai to th }
+                    .collectLatest { (st, th) ->
+                        val nm = getSystemService(NotificationManager::class.java)
+                        when {
+                            st != null -> {
+                                val title = if (st.paused) "AI 자막 잠시 멈춤 (영상 보는 중)" else "AI 자막 만드는 중 ${st.percent}%"
+                                val text = buildString {
+                                    append(st.current)
+                                    if (st.detail.isNotEmpty() && !st.paused) append("\n").append(st.detail)
+                                    if (st.waiting > 0) append(" · 대기 ${st.waiting}")
+                                    if (st.doneCount > 0) append(" · 완료 ${st.doneCount}")
+                                    if (st.skipCount > 0) append(" · 건너뜀 ${st.skipCount}")
+                                    if (th != null) append("\n썸네일 ${th.done}/${th.total} · ${th.folder}")
+                                }
+                                nm.notify(ID, build(title, text, st.percent))
+                            }
+                            th != null -> {
+                                val pct = if (th.total > 0) th.done * 100 / th.total else 0
+                                val text = th.folder + (if (th.waiting > 0) " · 대기 ${th.waiting}" else "")
+                                nm.notify(ID, build("썸네일 만드는 중 ${th.done}/${th.total}", text, pct))
+                            }
+                            else -> {
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                                stopSelf()
+                            }
+                        }
+                    }
             }
         }
         return START_NOT_STICKY
@@ -120,6 +147,7 @@ class AiBatchService : Service() {
         watch?.cancel()
         scope.cancel()
         runCatching { wakeLock?.release() }
+        runCatching { wifiLock?.release() }
         super.onDestroy()
     }
 

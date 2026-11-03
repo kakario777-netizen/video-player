@@ -261,7 +261,18 @@ class MainActivity : ComponentActivity() {
                 // 미리 만들기가 시작되면 알림 권한을 (처음 한 번) 물어본다
                 val aiBatch by com.kakario.videoplayer.ai.AiBatch.status.collectAsState()
                 LaunchedEffect(aiBatch != null) {
-                    if (aiBatch != null) askNotificationPermissionOnce()
+                    if (aiBatch != null) {
+                        askNotificationPermissionOnce()
+                        askBatteryExemptionOnce()
+                    }
+                }
+                // 썸네일 만들기가 시작될 때도 (화면이 꺼져도 계속하려면 알림·배터리 예외가 필요)
+                val thumbJob by thumbs.job.collectAsState()
+                LaunchedEffect(thumbJob != null) {
+                    if (thumbJob != null) {
+                        askNotificationPermissionOnce()
+                        askBatteryExemptionOnce()
+                    }
                 }
 
                 // '이어서 보기'에서 연 영상은 같은 폴더 목록을 뒤늦게 받아 다음 화를 찾는다
@@ -566,6 +577,25 @@ class MainActivity : ComponentActivity() {
         if (prefs.getBoolean("asked_notification", false)) return
         prefs.edit().putBoolean("asked_notification", true).apply()
         requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
+    }
+
+    /**
+     * 화면이 꺼져도 썸네일·AI 자막 만들기가 멈추지 않게 '배터리 사용량 최적화 제외'를 한 번 요청한다.
+     * (삼성 폰은 이게 없으면 꺼진 화면에서 작업을 재우는 경우가 많음)
+     */
+    @android.annotation.SuppressLint("BatteryLife")
+    private fun askBatteryExemptionOnce() {
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        if (prefs.getBoolean("asked_battery", false)) return
+        prefs.edit().putBoolean("asked_battery", true).apply()
+        runCatching {
+            startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(android.net.Uri.parse("package:$packageName"))
+            )
+        }
     }
 
     /** 영상 재생 중 홈 버튼 → 작은 창(PIP)으로 계속 재생. */
