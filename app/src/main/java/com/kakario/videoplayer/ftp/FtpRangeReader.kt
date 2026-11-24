@@ -56,7 +56,7 @@ class FtpRangeReader(private val server: FtpServer) {
         client?.let { c ->
             if (c.isConnected) return c
         }
-        val c = FTPClient()
+        val c = newFtpClient(server)
         c.bufferSize = 256 * 1024
         c.connectAndLogin(server)
         client = c

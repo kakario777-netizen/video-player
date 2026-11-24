@@ -1,8 +1,10 @@
 name: Build APK
 
+# 빌드는 릴리스할 때만: "v0.2.0" 같은 태그를 올리거나 직접 실행할 때.
+# 풀 리퀘스트로는 실행되지 않는다(외부인이 Secrets를 쓰거나 빌드를 돌릴 수 없음).
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -41,7 +43,19 @@ jobs:
           which ninja || sudo apt-get install -y ninja-build
           bash native/build.sh 2>&1 | tee native.log
 
+      # 서명 키: GitHub Secrets에서 꺼내 파일로 (로그에는 찍히지 않음)
+      - name: Signing key from Secrets
+        env:
+          KS: ${{ secrets.SIGNING_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then printf '%s' "$KS" | base64 -d > app/signing.keystore; echo "서명 키: Secrets"; else echo "서명 키: Secrets 없음(임시 키 파일 사용)"; fi
+
       - name: Build debug APK
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
           set -o pipefail
           gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
@@ -57,12 +71,18 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk video-player.apk
 
-      - name: Publish to Releases (latest)
+      - name: Publish to Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest video-player.apk \
-            --title "최신 빌드 #${{ github.run_number }}" \
-            --notes "커밋: ${{ github.sha }} — 폰에서 video-player.apk를 눌러 받아 설치하세요." \
-            --target ${{ github.sha }}
+          rm -f app/signing.keystore
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="build-${{ github.run_number }}"
+          fi
+          gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" video-player.apk \
+            --title "$TAG" \
+            --notes "폰에서 video-player.apk를 눌러 받아 설치하세요." \
+            --target ${{ github.sha }} --latest

@@ -15,3 +15,7 @@
 /native/.src/
 /native/.build/
 /app/src/main/jniLibs/
+
+# 서명 키는 저장소에 두지 않음 (GitHub Secrets)
+app/signing.keystore
+*.jks

@@ -155,7 +155,7 @@ object FtpStreamServer {
                 }
 
                 // FTP를 먼저 열어보고, 실패하면 재생기에 오류를 알려준다
-                val client = FTPClient()
+                val client = newFtpClient(target.server)
                 client.bufferSize = 256 * 1024
                 val c0 = System.currentTimeMillis()
                 val data: InputStream = try {

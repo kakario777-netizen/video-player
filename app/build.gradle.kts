@@ -14,7 +14,9 @@ android {
         targetSdk = 35
         // GitHub 자동 빌드 번호를 버전으로 사용 (새 APK가 기존 앱 위에 업데이트되도록)
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
-        versionName = "0.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+        // 릴리스 태그(v0.2.0 등)가 있으면 그 번호를 버전 이름으로
+        versionName = System.getenv("RELEASE_TAG")?.removePrefix("v")?.takeIf { it.isNotBlank() }
+            ?: ("0.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0"))
         // 갤럭시(64비트 ARM)용만 넣어 APK 크기를 줄인다
         ndk {
             abiFilters += "arm64-v8a"
@@ -22,12 +24,22 @@ android {
     }
 
     signingConfigs {
-        // 저장소에 들어 있는 고정 디버그 키 — 빌드마다 서명이 바뀌어 재설치가 필요해지는 문제 방지
+        // 서명 키는 GitHub Secrets에서 빌드 때만 꺼내 쓴다 (저장소에는 키를 두지 않음).
+        // 키가 같아야 업데이트 설치가 되므로 예전과 같은 키를 그대로 쓴다.
         getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+            val fromSecrets = file("signing.keystore")
+            if (fromSecrets.exists()) {
+                storeFile = fromSecrets
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            } else if (file("debug.keystore").exists()) {
+                // 옮기기 전까지 임시로 (Secrets 등록이 끝나면 이 파일은 저장소에서 지움)
+                storeFile = file("debug.keystore")
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 

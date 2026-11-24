@@ -25,7 +25,7 @@ import java.time.Duration
  * 끊겼으면 다음 요청 때 자동으로 다시 접속한다.
  */
 class FtpBrowser(private val server: FtpServer) {
-    private val client = FTPClient()
+    private val client = newFtpClient(server)
     private val mutex = Mutex()
 
     /** 접속 직후 서버가 알려준 시작 폴더. */
@@ -198,6 +198,10 @@ class FtpBrowser(private val server: FtpServer) {
     }
 }
 
+/** 서버 설정에 맞는 FTP 연결 (암호화 연결을 켰으면 FTPS — 명시적 TLS). */
+fun newFtpClient(server: FtpServer): FTPClient =
+    if (server.secure) org.apache.commons.net.ftp.FTPSClient(false) else FTPClient()
+
 /**
  * 접속 + 로그인 + 전송 설정 (목록용 연결과 영상 스트리밍용 연결이 함께 쓴다).
  * 실패하면 onFail()로 연결을 정리한 뒤 한국어 오류를 던진다.
@@ -222,6 +226,13 @@ fun FTPClient.connectAndLogin(server: FtpServer, onFail: () -> Unit = { runCatch
     if (!login(user, pass)) {
         onFail()
         throw UserFacingException("로그인에 실패했어요. 아이디와 비밀번호를 확인해 주세요.")
+    }
+    // FTPS: 파일 내용(데이터 연결)도 암호화
+    if (this is org.apache.commons.net.ftp.FTPSClient) {
+        runCatching {
+            execPBSZ(0)
+            execPROT("P")
+        }
     }
     if (server.encoding.equals("UTF-8", ignoreCase = true)) {
         // 지원하지 않는 서버는 그냥 무시하므로 보내도 안전하다.
