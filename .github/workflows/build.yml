@@ -6,6 +6,10 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: "릴리스 버전 (예: v0.2.0)"
+        required: false
 
 permissions:
   contents: write
@@ -55,7 +59,7 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
         run: |
           set -o pipefail
           gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
@@ -78,6 +82,8 @@ jobs:
           rm -f app/signing.keystore
           if [ "${{ github.ref_type }}" = "tag" ]; then
             TAG="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            TAG="${{ inputs.version }}"
           else
             TAG="build-${{ github.run_number }}"
           fi
