@@ -52,7 +52,7 @@ jobs:
         env:
           KS: ${{ secrets.SIGNING_KEYSTORE_B64 }}
         run: |
-          if [ -n "$KS" ]; then printf '%s' "$KS" | base64 -d > app/signing.keystore; echo "서명 키: Secrets"; else echo "서명 키: Secrets 없음(임시 키 파일 사용)"; fi
+          if [ -n "$KS" ]; then printf '%s' "$KS" | base64 -d > app/signing.keystore; echo "서명 키: Secrets"; else echo "::error::서명 키 Secrets가 없어요"; exit 1; fi
 
       - name: Build debug APK
         env:

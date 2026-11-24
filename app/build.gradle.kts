@@ -33,12 +33,6 @@ android {
                 storePassword = System.getenv("SIGNING_STORE_PASSWORD")
                 keyAlias = System.getenv("SIGNING_KEY_ALIAS")
                 keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
-            } else if (file("debug.keystore").exists()) {
-                // 옮기기 전까지 임시로 (Secrets 등록이 끝나면 이 파일은 저장소에서 지움)
-                storeFile = file("debug.keystore")
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
             }
         }
     }
