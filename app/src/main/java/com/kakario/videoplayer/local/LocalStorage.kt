@@ -65,9 +65,11 @@ object LocalStorage {
     fun isRoot(context: Context, path: String): Boolean =
         roots(context).any { it.path.trimEnd('/') == path.trimEnd('/') }
 
+    /** 파일, 또는 폴더(안의 것까지 모두)를 지운다. */
     suspend fun delete(path: String) = withContext(Dispatchers.IO) {
         val f = File(path)
-        if (!f.delete() && f.exists()) {
+        val ok = if (f.isDirectory) f.deleteRecursively() else f.delete()
+        if (!ok && f.exists()) {
             throw UserFacingException("삭제하지 못했어요.\n저장공간 접근 권한을 확인해 주세요.")
         }
     }

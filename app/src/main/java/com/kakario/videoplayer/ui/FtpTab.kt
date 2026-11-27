@@ -75,7 +75,7 @@ fun FtpTab(
         onOpenVideo = onOpenVideo,
         isFavorite = { isFavorite(serverId, it) },
         onToggleFavorite = { onToggleFavorite(serverId, it) },
-        delete = { browser.delete(it.path) },
+        delete = { browser.delete(it.path, it.isDirectory) },
     )
 }
 

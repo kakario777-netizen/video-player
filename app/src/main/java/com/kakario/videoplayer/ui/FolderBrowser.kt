@@ -91,7 +91,7 @@ fun FolderBrowser(
     onOpenVideo: (entry: FileEntry, siblings: List<FileEntry>) -> Unit,
     isFavorite: (String) -> Boolean,
     onToggleFavorite: (path: String) -> Unit,
-    /** 파일 삭제 (길게 누르기 메뉴). */
+    /** 파일·폴더 삭제 (길게 누르기 메뉴, 여러 개 선택). 폴더는 안의 것까지 모두. */
     delete: suspend (FileEntry) -> Unit,
 ) {
     var state by remember { mutableStateOf<LoadState>(LoadState.Loading) }
@@ -101,7 +101,7 @@ fun FolderBrowser(
 
     // 길게 누르기 메뉴 / 삭제 두 번 확인 (1 = 첫 확인, 2 = 마지막 확인)
     var menuFor by remember { mutableStateOf<FileEntry?>(null) }
-    var deleteTarget by remember { mutableStateOf<FileEntry?>(null) }
+    var deleteTarget by remember { mutableStateOf<List<FileEntry>?>(null) }
     var deleteStep by remember { mutableIntStateOf(0) }
     var sortMenu by remember { mutableStateOf(false) }
     var rebuildAsk by remember { mutableStateOf<RebuildAsk?>(null) }
@@ -368,6 +368,19 @@ fun FolderBrowser(
                         }
                     },
                 ) { Text("AI 자막") }
+                IconButton(
+                    enabled = chosen.isNotEmpty(),
+                    onClick = {
+                        deleteTarget = chosen
+                        deleteStep = 1
+                    },
+                ) {
+                    LineIcon(
+                        LineIcons.Trash,
+                        size = 22.dp,
+                        tint = if (chosen.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = if (selecting) 64.dp else 0.dp))
@@ -427,7 +440,7 @@ fun FolderBrowser(
                         }
                         MenuItem("파일 삭제", icon = LineIcons.Trash, color = MaterialTheme.colorScheme.error) {
                             menuFor = null
-                            deleteTarget = target
+                            deleteTarget = listOf(target)
                             deleteStep = 1
                         }
                     } else {
@@ -479,6 +492,11 @@ fun FolderBrowser(
                         MenuItem(if (fav) "즐겨찾기에서 빼기" else "즐겨찾기에 추가", icon = if (fav) LineIcons.Star else LineIcons.StarFilled) {
                             menuFor = null
                             toggle(target.path)
+                        }
+                        MenuItem("폴더 삭제 (안의 파일까지 모두)", icon = LineIcons.Trash, color = MaterialTheme.colorScheme.error) {
+                            menuFor = null
+                            deleteTarget = listOf(target)
+                            deleteStep = 1
                         }
                     }
                 }
@@ -560,15 +578,27 @@ fun FolderBrowser(
         )
     }
 
-    // ── 삭제 두 번 확인
-    deleteTarget?.let { target ->
+    // ── 삭제 두 번 확인 (파일·폴더·여러 개)
+    deleteTarget?.let { targets ->
+        val dirs = targets.count { it.isDirectory }
+        val files = targets.size - dirs
+        val where = if (origin.server != null) "서버" else "폰"
+        val what = when {
+            targets.size == 1 && dirs == 1 -> "'${targets[0].name}' 폴더"
+            targets.size == 1 -> "'${targets[0].name}'"
+            else -> buildString {
+                if (dirs > 0) append("폴더 ${dirs}개")
+                if (dirs > 0 && files > 0) append(" + ")
+                if (files > 0) append("파일 ${files}개")
+            }
+        }
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text(if (deleteStep == 1) "파일을 삭제할까요?" else "정말 삭제할까요?") },
+            title = { Text(if (deleteStep == 1) "삭제할까요?" else "정말 삭제할까요?") },
             text = {
                 Text(
-                    if (deleteStep == 1) "'${target.name}'\n파일을 ${if (origin.server != null) "서버" else "폰"}에서 지워요."
-                    else "삭제한 파일은 되돌릴 수 없어요."
+                    if (deleteStep == 1) "$what\n${where}에서 지워요." + (if (dirs > 0) "\n폴더는 안에 든 파일과 하위 폴더까지 모두 지워져요." else "")
+                    else "삭제한 ${if (dirs > 0) "폴더와 파일" else "파일"}은 되돌릴 수 없어요."
                 )
             },
             confirmButton = {
@@ -578,19 +608,33 @@ fun FolderBrowser(
                         return@TextButton
                     }
                     deleteTarget = null
+                    selecting = false
+                    selected = emptySet()
                     scope.launch {
-                        try {
-                            currentDelete(target)
-                            playback.clear(playback.keyFor(origin, target))
-                            toast("삭제했어요")
-                            reloadKey++
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: UserFacingException) {
-                            toast(e.message ?: "삭제하지 못했어요")
-                        } catch (e: Exception) {
-                            toast("삭제하지 못했어요: ${e.message ?: e.javaClass.simpleName}")
+                        var ok = 0
+                        var lastError: String? = null
+                        for (t in targets) {
+                            try {
+                                currentDelete(t)
+                                if (!t.isDirectory) playback.clear(playback.keyFor(origin, t))
+                                ok++
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: UserFacingException) {
+                                lastError = e.message
+                            } catch (e: Exception) {
+                                lastError = e.message ?: e.javaClass.simpleName
+                            }
                         }
+                        val fail = targets.size - ok
+                        toast(
+                            when {
+                                fail == 0 -> if (targets.size == 1) "삭제했어요" else "${ok}개 삭제했어요"
+                                ok == 0 -> lastError ?: "삭제하지 못했어요"
+                                else -> "${ok}개 삭제, ${fail}개 실패 — ${lastError ?: ""}"
+                            }
+                        )
+                        reloadKey++
                     }
                 }) {
                     Text(

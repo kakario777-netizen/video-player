@@ -121,12 +121,32 @@ class FtpBrowser(private val server: FtpServer) {
         }
     }
 
-    /** 서버에서 파일 하나를 지운다. */
-    suspend fun delete(path: String) = ftp {
+    /** 서버에서 파일 하나, 또는 폴더(안의 파일·하위 폴더까지 모두)를 지운다. */
+    suspend fun delete(path: String, isDirectory: Boolean = false) = ftp {
         ensureConnected()
+        if (isDirectory) deleteTree(path) else deleteOne(path)
+    }
+
+    private fun deleteOne(path: String) {
         if (!client.deleteFile(path)) {
             throw UserFacingException(
                 "삭제하지 못했어요 (응답 ${client.replyCode}).\nFTP 계정에 지우기 권한이 있는지 확인해 주세요."
+            )
+        }
+    }
+
+    /** 폴더 안을 먼저 다 비운 뒤 폴더를 지운다 (FTP는 빈 폴더만 지울 수 있음). */
+    private fun deleteTree(dir: String) {
+        val children = client.listFiles(dir) ?: emptyArray()
+        for (f in children) {
+            val name = f?.name ?: continue
+            if (name == "." || name == "..") continue
+            val child = dir.trimEnd('/') + "/" + name
+            if (f.isDirectory) deleteTree(child) else deleteOne(child)
+        }
+        if (!client.removeDirectory(dir)) {
+            throw UserFacingException(
+                "폴더를 지우지 못했어요 (응답 ${client.replyCode}).\nFTP 계정에 지우기 권한이 있는지 확인해 주세요."
             )
         }
     }
